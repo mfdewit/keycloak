@@ -91,5 +91,6 @@ public interface Errors {
     String UNKNOWN_IDENTITY_PROVIDER = "unknown_identity_provider";
     String ILLEGAL_ORIGIN = "illegal_origin";
     String DISPLAY_UNSUPPORTED = "display_unsupported";
+    String SESSION_LIMIT_EXCEEDED= "session_limit_exceeded";
 
 }
