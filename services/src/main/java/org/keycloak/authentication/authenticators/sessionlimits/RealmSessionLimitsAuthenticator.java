@@ -28,7 +28,7 @@ public class RealmSessionLimitsAuthenticator extends AbstractSessionLimitsAuthen
         long realmSessionCount = activeClientSessionStats.values().stream().reduce(0L, Long::sum);
 
         logger.infof("realm limit: %s", realmLimit);
-        logger.infof("session-realm-count: %s", realmSessionCount);
+        logger.infof("current session count within realm: %s", realmSessionCount);
 
         if (exceedsLimit(realmSessionCount, realmLimit)) {
             logger.infof("Session count exceeded configured limit for realm. Count: %n, Limit: %i, Realm: %s", realmSessionCount, realmLimit, context.getRealm().getDisplayName());
