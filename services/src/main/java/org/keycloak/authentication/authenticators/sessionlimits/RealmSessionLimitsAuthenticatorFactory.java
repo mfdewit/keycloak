@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.List;
 
 public class RealmSessionLimitsAuthenticatorFactory implements AuthenticatorFactory {
+    public static final String PROVIDER_ID = "realm-session-config";
     public static final String REALM_LIMIT = "realmLimit";
     public static final String BEHAVIOR = "behavior";
     public static final String DENY_NEW_SESSION = "Deny new session";
@@ -91,6 +92,6 @@ public class RealmSessionLimitsAuthenticatorFactory implements AuthenticatorFact
 
     @Override
     public String getId() {
-        return "realm-session-config";
+        return PROVIDER_ID;
     }
 }
