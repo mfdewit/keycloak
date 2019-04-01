@@ -14,65 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.keycloak.testsuite.forms;
+package org.keycloak.testsuite.sessionlimits;
 
-import com.google.common.cache.RemovalListener;
 import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.graphene.page.Page;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.keycloak.OAuth2Constants;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordFormFactory;
-import org.keycloak.authentication.authenticators.sessionlimits.RealmSessionLimitsAuthenticatorFactory;
-import org.keycloak.crypto.Algorithm;
-import org.keycloak.events.Details;
-import org.keycloak.events.Errors;
-import org.keycloak.events.EventType;
-import org.keycloak.jose.jws.JWSInput;
-import org.keycloak.jose.jws.JWSInputException;
-import org.keycloak.models.*;
-import org.keycloak.models.utils.SessionTimeoutHelper;
-import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
-import org.keycloak.representations.idm.*;
+import org.keycloak.authentication.authenticators.sessionlimits.UserSessionLimitsAuthenticatorFactory;
+import org.keycloak.models.AuthenticationExecutionModel;
+import org.keycloak.models.AuthenticationFlowModel;
+import org.keycloak.models.AuthenticatorConfigModel;
+import org.keycloak.models.RealmModel;
+import org.keycloak.representations.idm.RealmRepresentation;
+import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
-import org.keycloak.testsuite.admin.ApiUtil;
-import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
-import org.keycloak.testsuite.authentication.ExpectedParamAuthenticator;
-import org.keycloak.testsuite.authentication.ExpectedParamAuthenticatorFactory;
-import org.keycloak.testsuite.authentication.PushButtonAuthenticatorFactory;
-import org.keycloak.testsuite.pages.AppPage;
-import org.keycloak.testsuite.pages.AppPage.RequestType;
-import org.keycloak.testsuite.pages.ErrorPage;
 import org.keycloak.testsuite.pages.LoginPage;
-import org.keycloak.testsuite.pages.LoginPasswordUpdatePage;
-import org.keycloak.testsuite.runonserver.RunOnServer;
 import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
-import org.keycloak.testsuite.util.*;
-import org.openqa.selenium.NoSuchElementException;
-import sun.awt.util.IdentityArrayList;
+import org.keycloak.testsuite.util.RealmBuilder;
+import org.keycloak.testsuite.util.UserBuilder;
 
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriBuilder;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.keycloak.testsuite.admin.ApiUtil.findClientByClientId;
-import static org.keycloak.testsuite.util.OAuthClient.AUTH_SERVER_ROOT;
-
-/**
- * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
- */
-public class SessionLimiterTest extends AbstractTestRealmKeycloakTest {
+public class UserSessionLimitsTest extends AbstractTestRealmKeycloakTest {
 
     @Deployment
     public static WebArchive deploy() {
@@ -82,15 +51,22 @@ public class SessionLimiterTest extends AbstractTestRealmKeycloakTest {
 
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
-        UserRepresentation user = UserBuilder.create()
-                .id("login-test")
-                .username("login-test")
-                .email("login@test.com")
+        UserRepresentation user1 = UserBuilder.create()
+                .id("login-test-1")
+                .username("login-test-1")
+                .email("login1@test.com")
                 .enabled(true)
-                .password("password")
+                .password("password1")
                 .build();
-        userId = user.getId();
-
+        UserRepresentation user2 = UserBuilder.create()
+                .id("login-test-2")
+                .username("login-test-2")
+                .email("login2@test.com")
+                .enabled(true)
+                .password("password2")
+                .build();
+        RealmBuilder.edit(testRealm)
+                .user(user1).user(user2);
     }
 
     @Before
@@ -121,21 +97,21 @@ public class SessionLimiterTest extends AbstractTestRealmKeycloakTest {
             execution.setAuthenticatorFlow(false);
             realm.addAuthenticatorExecution(execution);
 
-            // session limits authenticator
+            // user session limits authenticator
             execution = new AuthenticationExecutionModel();
             execution.setParentFlow(browser.getId());
-            execution.setRequirement(AuthenticationExecutionModel.Requirement.ALTERNATIVE);
-            execution.setAuthenticator(RealmSessionLimitsAuthenticatorFactory.PROVIDER_ID);
-            execution.setPriority(10);
+            execution.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+            execution.setAuthenticator(UserSessionLimitsAuthenticatorFactory.USER_SESSION_LIMITS);
+            execution.setPriority(30);
             execution.setAuthenticatorFlow(false);
-
 
             AuthenticatorConfigModel configModel = new AuthenticatorConfigModel();
             Map<String, String> sessionAuthenticatorConfig = new HashMap<>();
-            sessionAuthenticatorConfig.put(RealmSessionLimitsAuthenticatorFactory.BEHAVIOR, RealmSessionLimitsAuthenticatorFactory.DENY_NEW_SESSION);
-            sessionAuthenticatorConfig.put(RealmSessionLimitsAuthenticatorFactory.REALM_LIMIT, "1");
+            sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.BEHAVIOR, UserSessionLimitsAuthenticatorFactory.DENY_NEW_SESSION);
+            sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.USER_REALM_LIMIT, "1");
+            sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.USER_CLIENT_LIMIT, "1");
             configModel.setConfig(sessionAuthenticatorConfig);
-            configModel.setAlias("realm-session-limits");
+            configModel.setAlias("user-session-limits");
             configModel = realm.addAuthenticatorConfig(configModel);
             execution.setAuthenticatorConfig(configModel.getId());
             realm.addAuthenticatorExecution(execution);
@@ -146,37 +122,18 @@ public class SessionLimiterTest extends AbstractTestRealmKeycloakTest {
     public AssertEvents events = new AssertEvents(this);
 
     @Page
-    protected AppPage appPage;
-
-    @Page
-    protected LoginPage loginPage;
-
-    @Page
-    protected ErrorPage errorPage;
-
-    @Page
-    protected LoginPasswordUpdatePage updatePasswordPage;
-
-    private static String userId;
-
-    private static String user2Id;
+    protected LoginPage loginPage, loginPage2;
 
     @Test
     public void testSessionCreationAllowed() {
-        String loginFormUrl = oauth.getLoginFormUrl();
-        driver.navigate().to(loginFormUrl);
-        loginPage.assertCurrent();
+        loginPage.open();
+        loginPage.login("login-test-1", "password1");
+        // Now login here with user2
     }
 
     @Test
     public void testSessionCountExceededAndNewSessionDenied() {
-        Client client = ClientBuilder.newClient();
-        Response response = client.target(oauth.getLoginFormUrl()).request().get();
-        Assert.assertThat(response.getStatus(), is(equalTo(200)));
-
-        Client client2 = ClientBuilder.newClient();
-        Response response2 = client2.target(oauth.getLoginFormUrl()).request().get();
-        Assert.assertThat(response2.getStatus(), is(equalTo(403)));
+        // Login twice with user-1 and expect the session to be denied
     }
 
 }

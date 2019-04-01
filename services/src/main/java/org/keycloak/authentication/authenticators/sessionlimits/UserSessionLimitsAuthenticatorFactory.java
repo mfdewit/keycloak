@@ -17,6 +17,7 @@ public class UserSessionLimitsAuthenticatorFactory implements AuthenticatorFacto
     public static final String BEHAVIOR = "behavior";
     public static final String DENY_NEW_SESSION = "Deny new session";
     public static final String TERMINATE_OLDEST_SESSION = "Terminate oldest session";
+    public static final String USER_SESSION_LIMITS = "user-session-limits";
 
 
     private static AuthenticationExecutionModel.Requirement[] REQUIREMENT_CHOICES = {
@@ -98,6 +99,6 @@ public class UserSessionLimitsAuthenticatorFactory implements AuthenticatorFacto
 
     @Override
     public String getId() {
-        return "user-session-config";
+        return USER_SESSION_LIMITS;
     }
 }
