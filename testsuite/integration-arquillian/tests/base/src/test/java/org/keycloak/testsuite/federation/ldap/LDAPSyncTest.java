@@ -28,6 +28,7 @@ import org.junit.runners.MethodSorters;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.component.ComponentModel;
 import org.keycloak.representations.idm.ComponentRepresentation;
+import org.keycloak.representations.idm.SynchronizationResultRepresentation;
 import org.keycloak.services.managers.UserStorageSyncManager;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.models.KeycloakSessionFactory;
@@ -46,6 +47,8 @@ import org.keycloak.testsuite.util.LDAPTestUtils;
 import org.keycloak.testsuite.util.WaitUtils;
 
 import static org.keycloak.testsuite.arquillian.DeploymentTargetModifier.AUTH_SERVER_CURRENT;
+
+import javax.ws.rs.BadRequestException;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -114,7 +117,7 @@ public class LDAPSyncTest extends AbstractLDAPTest {
     @Test
     public void test01LDAPSync() {
         // wait a bit
-        WaitUtils.pause(ldapRule.getSleepTime());
+        WaitUtils.pause(getLDAPRule().getSleepTime());
 
         // Sync 5 users from LDAP
         testingClient.server().run(session -> {
@@ -151,7 +154,7 @@ public class LDAPSyncTest extends AbstractLDAPTest {
         });
 
         // wait a bit
-        WaitUtils.pause(ldapRule.getSleepTime());
+        WaitUtils.pause(getLDAPRule().getSleepTime());
 
         testingClient.server().run(session -> {
             LDAPTestContext ctx = LDAPTestContext.init(session);
@@ -355,4 +358,29 @@ public class LDAPSyncTest extends AbstractLDAPTest {
         });
     }
 
+    // KEYCLOAK-10770 user-storage/{id}/sync should return 400 instead of 404
+    @Test
+    public void test05SyncRestAPIMissingAction() {
+        ComponentRepresentation ldapRep = testRealm().components().component(ldapModelId).toRepresentation();
+
+        try {
+            SynchronizationResultRepresentation syncResultRep = adminClient.realm("test").userStorage().syncUsers( ldapModelId, null);
+            Assert.fail("Should throw 400");
+        } catch (Exception e) {
+            Assert.assertTrue(e instanceof BadRequestException);
+        }
+    }
+
+    // KEYCLOAK-10770 user-storage/{id}/sync should return 400 instead of 404
+    @Test
+    public void test06SyncRestAPIWrongAction() {
+        ComponentRepresentation ldapRep = testRealm().components().component(ldapModelId).toRepresentation();
+
+        try {
+            SynchronizationResultRepresentation syncResultRep = adminClient.realm("test").userStorage().syncUsers( ldapModelId, "wrong action");
+            Assert.fail("Should throw 400");
+        } catch (Exception e) {
+            Assert.assertTrue(e instanceof BadRequestException);
+        }
+    }
 }

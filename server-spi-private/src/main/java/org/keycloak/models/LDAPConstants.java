@@ -82,6 +82,8 @@ public class LDAPConstants {
     // Custom user search filter
     public static final String CUSTOM_USER_SEARCH_FILTER = "customUserSearchFilter";
 
+    public static final String START_TLS = "startTls";
+
     // Custom attributes on UserModel, which is mapped to LDAP
     public static final String LDAP_ID = "LDAP_ID";
     public static final String LDAP_ENTRY_DN = "LDAP_ENTRY_DN";
@@ -120,6 +122,7 @@ public class LDAPConstants {
     public static final String CUSTOM_ATTRIBUTE_EXPIRY_DATE = "expiryDate";
     public static final String ENTRY_UUID = "entryUUID";
     public static final String OBJECT_GUID = "objectGUID";
+    public static final String NOVELL_EDIRECTORY_GUID = "guid";
     public static final String CREATE_TIMESTAMP = "createTimestamp";
     public static final String MODIFY_TIMESTAMP = "modifyTimestamp";
 

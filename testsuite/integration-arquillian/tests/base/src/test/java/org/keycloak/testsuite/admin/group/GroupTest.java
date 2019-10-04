@@ -23,10 +23,13 @@ import org.keycloak.admin.client.resource.GroupResource;
 import org.keycloak.admin.client.resource.GroupsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.RoleMappingResource;
+import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
+import org.keycloak.models.UserModel;
+import org.keycloak.models.utils.RepresentationToModel;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -49,9 +52,12 @@ import javax.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import javax.ws.rs.ClientErrorException;
 import javax.ws.rs.core.Response.Status;
@@ -668,6 +674,44 @@ public class GroupTest extends AbstractGroupTest {
             assertEquals(110, group.members(-1, -2).size());
         }
     }
+    
+    @Test
+    public void getGroupsWithFullRepresentation() {
+        RealmResource realm = adminClient.realms().realm("test");
+        GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+        
+        GroupRepresentation group = new GroupRepresentation();
+        group.setName("groupWithAttribute");
+        
+        Map<String, List<String>> attributes = new HashMap<String, List<String>>();
+        attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
+		group.setAttributes(attributes);
+        group = createGroup(realm, group);
+        
+        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20, true);
+        
+        assertFalse(groups.isEmpty());
+        assertTrue(groups.get(0).getAttributes().containsKey("attribute1"));
+    }
+    
+    @Test
+    public void getGroupsWithBriefRepresentation() {
+        RealmResource realm = adminClient.realms().realm("test");
+        GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+        
+        GroupRepresentation group = new GroupRepresentation();
+        group.setName("groupWithAttribute");
+        
+        Map<String, List<String>> attributes = new HashMap<String, List<String>>();
+        attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
+		group.setAttributes(attributes);
+        group = createGroup(realm, group);
+        
+        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20);
+        
+        assertFalse(groups.isEmpty());
+        assertNull(groups.get(0).getAttributes());
+    }
 
     @Test
     public void searchAndCountGroups() throws Exception {
@@ -722,5 +766,41 @@ public class GroupTest extends AbstractGroupTest {
 
         assertEquals(new Long(allGroups.size()), realm.groups().count(true).get("count"));
         assertEquals(new Long(allGroups.size() + 1), realm.groups().count(false).get("count"));
+    }
+
+    @Test
+    public void testBriefRepresentationOnGroupMembers() {
+        RealmResource realm = adminClient.realms().realm("test");
+        String groupName = "brief-grouptest-group";
+        String userName = "brief-grouptest-user";
+
+        GroupsResource groups = realm.groups();
+        try (Response response = groups.add(GroupBuilder.create().name(groupName).build())) {
+            String groupId = ApiUtil.getCreatedId(response);
+
+            GroupResource group = groups.group(groupId);
+
+            UsersResource users = realm.users();
+
+            UserRepresentation userRepresentation = UserBuilder.create()
+                    .username(userName)
+                    .addAttribute("myattribute", "myvalue")
+                    .build();
+
+            Response r = users.create(userRepresentation);
+            UserResource user = users.get(ApiUtil.getCreatedId(r));
+            user.joinGroup(groupId);
+
+            UserRepresentation defaultRepresentation = group.members(null, null).get(0);
+            UserRepresentation fullRepresentation = group.members(null, null, false).get(0);
+            UserRepresentation briefRepresentation = group.members(null, null, true).get(0);
+
+            assertEquals("full group member representation includes attributes", fullRepresentation.getAttributes(), userRepresentation.getAttributes());
+            assertEquals("default group member representation is full", defaultRepresentation.getAttributes(), userRepresentation.getAttributes());
+            assertNull("brief group member representation omits attributes", briefRepresentation.getAttributes());
+
+            group.remove();
+            user.remove();
+        }
     }
 }

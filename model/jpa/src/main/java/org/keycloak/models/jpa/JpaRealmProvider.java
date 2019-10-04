@@ -40,9 +40,11 @@ import org.keycloak.models.jpa.entities.RoleEntity;
 import org.keycloak.models.utils.KeycloakModelUtils;
 
 import javax.persistence.EntityManager;
+import javax.persistence.FlushModeType;
 import javax.persistence.TypedQuery;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.persistence.LockModeType;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -135,7 +137,7 @@ public class JpaRealmProvider implements RealmProvider {
 
     @Override
     public boolean removeRealm(String id) {
-        RealmEntity realm = em.find(RealmEntity.class, id);
+        RealmEntity realm = em.find(RealmEntity.class, id, LockModeType.PESSIMISTIC_WRITE);
         if (realm == null) {
             return false;
         }
@@ -467,7 +469,7 @@ public class JpaRealmProvider implements RealmProvider {
         for (GroupModel subGroup : group.getSubGroups()) {
             session.realms().removeGroup(realm, subGroup);
         }
-        GroupEntity groupEntity = em.find(GroupEntity.class, group.getId());
+        GroupEntity groupEntity = em.find(GroupEntity.class, group.getId(), LockModeType.PESSIMISTIC_WRITE);
         if ((groupEntity == null) || (!groupEntity.getRealm().getId().equals(realm.getId()))) {
             return false;
         }
@@ -497,7 +499,11 @@ public class JpaRealmProvider implements RealmProvider {
         RealmEntity realmEntity = em.getReference(RealmEntity.class, realm.getId());
         groupEntity.setRealm(realmEntity);
         em.persist(groupEntity);
-        em.flush();
+        // KEYCLOAK-8253 - Skip / postpone the EM flush if there's an active WIP transaction and EM flush mode is set to AUTO (the default)
+        // This improves the time performance of LDAP groups sync and EM flush in that case is performed anyway as part of the TX commit
+        if (!session.getTransactionManager().isActive() || em.getFlushMode() != FlushModeType.AUTO) {
+            em.flush();
+        }
         realmEntity.getGroups().add(groupEntity);
 
         GroupAdapter adapter = new GroupAdapter(realm, em, groupEntity);
@@ -508,8 +514,6 @@ public class JpaRealmProvider implements RealmProvider {
     public void addTopLevelGroup(RealmModel realm, GroupModel subGroup) {
         subGroup.setParent(null);
     }
-
-
 
     @Override
     public ClientModel addClient(RealmModel realm, String clientId) {
@@ -590,7 +594,7 @@ public class JpaRealmProvider implements RealmProvider {
             removeRole(realm, role);
         }
 
-        ClientEntity clientEntity = ((ClientAdapter)client).getEntity();
+        ClientEntity clientEntity = em.find(ClientEntity.class, id, LockModeType.PESSIMISTIC_WRITE);
 
         session.getKeycloakSessionFactory().publish(new RealmModel.ClientRemovedEvent() {
             @Override
@@ -686,7 +690,7 @@ public class JpaRealmProvider implements RealmProvider {
 
     @Override
     public void removeClientInitialAccessModel(RealmModel realm, String id) {
-        ClientInitialAccessEntity entity = em.find(ClientInitialAccessEntity.class, id);
+        ClientInitialAccessEntity entity = em.find(ClientInitialAccessEntity.class, id, LockModeType.PESSIMISTIC_WRITE);
         if (entity != null) {
             em.remove(entity);
             em.flush();

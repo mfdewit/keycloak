@@ -130,7 +130,7 @@ public class SamlService extends AuthorizationEndpointBase {
 
             if (samlRequest == null && samlResponse == null) {
                 event.event(EventType.LOGIN);
-                event.error(Errors.INVALID_TOKEN);
+                event.error(Errors.SAML_TOKEN_NOT_FOUND);
                 return ErrorPage.error(session, null, Response.Status.BAD_REQUEST, Messages.INVALID_REQUEST);
 
             }
@@ -352,6 +352,11 @@ public class SamlService extends AuthorizationEndpointBase {
 
                 }
             }
+
+            if (null != requestAbstractType.isForceAuthn()
+                && requestAbstractType.isForceAuthn()) {
+                authSession.setAuthNote(SamlProtocol.SAML_LOGIN_REQUEST_FORCEAUTHN, SamlProtocol.SAML_FORCEAUTHN_REQUIREMENT);
+            }
             //If unset we fall back to default "false"
             final boolean isPassive = (null == requestAbstractType.isIsPassive() ?
                     false : requestAbstractType.isIsPassive().booleanValue());
@@ -458,7 +463,7 @@ public class SamlService extends AuthorizationEndpointBase {
             builder.logoutRequestID(logoutRequest.getID());
             builder.destination(logoutBindingUri);
             builder.issuer(RealmsResource.realmBaseUrl(session.getContext().getUri()).build(realm.getName()).toString());
-            JaxrsSAML2BindingBuilder binding = new JaxrsSAML2BindingBuilder().relayState(logoutRelayState);
+            JaxrsSAML2BindingBuilder binding = new JaxrsSAML2BindingBuilder(session).relayState(logoutRelayState);
             boolean postBinding = SamlProtocol.SAML_POST_BINDING.equals(logoutBinding);
             if (samlClient.requiresRealmSignature()) {
                 SignatureAlgorithm algorithm = samlClient.getSignatureAlgorithm();

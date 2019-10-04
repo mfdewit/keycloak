@@ -29,7 +29,7 @@ import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.services.ServicesLogger;
 
-import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.CERTIFICATE_EXTENDED_KEY_USAGE;
+import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.*;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.CERTIFICATE_KEY_USAGE;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.CONFIRMATION_PAGE_DISALLOWED;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.CRL_RELATIVE_PATH;
@@ -40,8 +40,6 @@ import static org.keycloak.authentication.authenticators.x509.AbstractX509Client
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.ENABLE_CRLDP;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.ENABLE_OCSP;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_ISSUERDN;
-import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_ISSUERDN_CN;
-import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_ISSUERDN_EMAIL;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_SERIALNUMBER;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_SUBJECTALTNAME_EMAIL;
 import static org.keycloak.authentication.authenticators.x509.AbstractX509ClientCertificateAuthenticator.MAPPING_SOURCE_CERT_SUBJECTALTNAME_OTHERNAME;
@@ -77,9 +75,10 @@ public abstract class AbstractX509ClientCertificateAuthenticatorFactory implemen
             MAPPING_SOURCE_CERT_SUBJECTALTNAME_OTHERNAME,
             MAPPING_SOURCE_CERT_SUBJECTDN_CN,
             MAPPING_SOURCE_CERT_ISSUERDN,
-            MAPPING_SOURCE_CERT_ISSUERDN_EMAIL,
-            MAPPING_SOURCE_CERT_ISSUERDN_CN,
-            MAPPING_SOURCE_CERT_SERIALNUMBER
+            MAPPING_SOURCE_CERT_SERIALNUMBER,
+            MAPPING_SOURCE_CERT_SERIALNUMBER_ISSUERDN,
+            MAPPING_SOURCE_CERT_SHA256_THUMBPRINT,
+            MAPPING_SOURCE_CERT_CERTIFICATE_PEM
     };
 
     private static final String[] userModelMappers = {
@@ -101,6 +100,21 @@ public abstract class AbstractX509ClientCertificateAuthenticatorFactory implemen
         mappingMethodList.setDefaultValue(mappingSources[0]);
         mappingMethodList.setOptions(mappingSourceTypes);
 
+        ProviderConfigProperty canonicalDn = new ProviderConfigProperty();
+        canonicalDn.setType(BOOLEAN_TYPE);
+        canonicalDn.setName(CANONICAL_DN);
+        canonicalDn.setLabel("Canonical DN representation enabled");
+        canonicalDn.setDefaultValue(false);
+        canonicalDn.setHelpText("Use the canonical format to determine the distinguished name. This option is relevant for authenticators using a distinguished name.");
+
+        ProviderConfigProperty serialnumberHex = new ProviderConfigProperty();
+        serialnumberHex.setType(BOOLEAN_TYPE);
+        serialnumberHex.setName(SERIALNUMBER_HEX);
+        serialnumberHex.setLabel("Enable Serial Number hexadecimal representation");
+        serialnumberHex.setDefaultValue(false);
+        serialnumberHex.setHelpText("Use the hex representation of the serial number. This option is relevant for authenticators using serial number.");
+
+        
         ProviderConfigProperty regExp = new ProviderConfigProperty();
         regExp.setType(STRING_TYPE);
         regExp.setName(REGULAR_EXPRESSION);
@@ -122,11 +136,12 @@ public abstract class AbstractX509ClientCertificateAuthenticatorFactory implemen
         userMapperList.setOptions(mapperTypes);
 
         ProviderConfigProperty attributeOrPropertyValue = new ProviderConfigProperty();
-        attributeOrPropertyValue.setType(STRING_TYPE);
+        attributeOrPropertyValue.setType(MULTIVALUED_STRING_TYPE);
         attributeOrPropertyValue.setName(CUSTOM_ATTRIBUTE_NAME);
         attributeOrPropertyValue.setDefaultValue(DEFAULT_ATTRIBUTE_NAME);
         attributeOrPropertyValue.setLabel("A name of user attribute");
-        attributeOrPropertyValue.setHelpText("A name of user attribute to map the extracted user identity to existing user. The name must be a valid, existing user attribute if User Mapping Method is set to Custom Attribute Mapper.");
+        attributeOrPropertyValue.setHelpText("A name of user attribute to map the extracted user identity to existing user. The name must be a valid, existing user attribute if User Mapping Method is set to Custom Attribute Mapper. " +
+                "Multiple values are relevant when attribute mapping is related to multiple values, e.g. 'Certificate Serial Number and IssuerDN'");
 
         ProviderConfigProperty crlCheckingEnabled = new ProviderConfigProperty();
         crlCheckingEnabled.setType(BOOLEAN_TYPE);
@@ -189,6 +204,8 @@ public abstract class AbstractX509ClientCertificateAuthenticatorFactory implemen
         identityConfirmationPageDisallowed.setHelpText("By default, the users are prompted to confirm their identity extracted from X509 client certificate. The identity confirmation prompt is skipped if the option is switched on.");
 
         configProperties = asList(mappingMethodList,
+                canonicalDn,
+                serialnumberHex,
                 regExp,
                 userMapperList,
                 attributeOrPropertyValue,

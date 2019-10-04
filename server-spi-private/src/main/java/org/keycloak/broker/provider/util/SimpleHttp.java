@@ -27,12 +27,16 @@ import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.message.BasicNameValuePair;
+import org.keycloak.common.util.Base64;
 import org.keycloak.connections.httpclient.HttpClientProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.util.JsonSerialization;
@@ -47,8 +51,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
-import org.apache.http.client.methods.HttpDelete;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -97,6 +102,10 @@ public class SimpleHttp {
         return new SimpleHttp(url, "POST", client);
     }
 
+    public static SimpleHttp doPut(String url, HttpClient client) {
+        return new SimpleHttp(url, "PUT", client);
+    }
+
     public SimpleHttp header(String name, String value) {
         if (headers == null) {
             headers = new HashMap<String, String>();
@@ -120,6 +129,12 @@ public class SimpleHttp {
 
     public SimpleHttp auth(String token) {
         header("Authorization", "Bearer " + token);
+        return this;
+    }
+
+    public SimpleHttp authBasic(final String username, final String password) {
+        final String basicCredentials = String.format("%s:%s", username, password);
+        header("Authorization", "Basic " + Base64.encodeBytes(basicCredentials.getBytes()));
         return this;
     }
 
@@ -166,9 +181,11 @@ public class SimpleHttp {
     private Response makeRequest() throws IOException {
         boolean get = method.equals("GET");
         boolean post = method.equals("POST");
+        boolean put = method.equals("PUT");
         boolean delete = method.equals("DELETE");
 
         HttpRequestBase httpRequest = new HttpPost(url);
+        
         if (get) {
             httpRequest = new HttpGet(appendParameterToUrl(url));
         }
@@ -177,14 +194,18 @@ public class SimpleHttp {
             httpRequest = new HttpDelete(appendParameterToUrl(url));
         }
 
-        if (post) {
+        if (put) {
+            httpRequest = new HttpPut(appendParameterToUrl(url));
+        }
+
+        if (post || put) {
             if (params != null) {
-                ((HttpPost) httpRequest).setEntity(getFormEntityFromParameter());
+                ((HttpEntityEnclosingRequestBase) httpRequest).setEntity(getFormEntityFromParameter());
             } else if (entity != null) {
                 if (headers == null || !headers.containsKey("Content-Type")) {
                     header("Content-Type", "application/json");
                 }
-                ((HttpPost) httpRequest).setEntity(getJsonEntity());
+                ((HttpEntityEnclosingRequestBase) httpRequest).setEntity(getJsonEntity());
             } else {
                 throw new IllegalStateException("No content set");
             }
@@ -304,7 +325,24 @@ public class SimpleHttp {
 
         public String getFirstHeader(String name) throws IOException {
             readResponse();
-            return response.getHeaders(name)[0].getValue();
+            Header[] headers = response.getHeaders(name);
+            
+            if (headers != null && headers.length > 0) {
+                return headers[0].getValue();       
+            }
+            
+            return null;
+        }
+
+        public List<String> getHeader(String name) throws IOException {
+            readResponse();
+            Header[] headers = response.getHeaders(name);
+
+            if (headers != null && headers.length > 0) {
+                return Stream.of(headers).map(Header::getValue).collect(Collectors.toList());
+            }
+
+            return null;
         }
 
         public void close() throws IOException {

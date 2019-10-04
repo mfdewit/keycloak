@@ -18,6 +18,7 @@
 package org.keycloak.models;
 
 import org.keycloak.OAuth2Constants;
+import org.keycloak.crypto.Algorithm;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -55,12 +56,20 @@ public final class Constants {
     // 60 days
     public static final int DEFAULT_OFFLINE_SESSION_MAX_LIFESPAN = 5184000;
 
+    public static final String DEFAULT_WEBAUTHN_POLICY_SIGNATURE_ALGORITHMS = Algorithm.ES256;
+    public static final String DEFAULT_WEBAUTHN_POLICY_RP_ENTITY_NAME = "keycloak";
+    // it stands for optional parameter not specified in WebAuthn
+    public static final String DEFAULT_WEBAUTHN_POLICY_NOT_SPECIFIED = "not specified";
+
     public static final String VERIFY_EMAIL_KEY = "VERIFY_EMAIL_KEY";
     public static final String VERIFY_EMAIL_CODE = "VERIFY_EMAIL_CODE";
     public static final String EXECUTION = "execution";
     public static final String CLIENT_ID = "client_id";
     public static final String TAB_ID = "tab_id";
     public static final String KEY = "key";
+    public static final String KC_ACTION = "kc_action";
+    public static final String IS_AIA_REQUEST = "IS_AIA_REQUEST";
+    public static final String AIA_SILENT_CANCEL = "silent_cancel";
 
     public static final String SKIP_LINK = "skipLink";
     public static final String TEMPLATE_ATTR_ACTION_URI = "actionUri";

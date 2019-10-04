@@ -98,6 +98,7 @@ public class OIDCLoginProtocol implements LoginProtocol {
     public static final String CLIENT_SECRET_POST = "client_secret_post";
     public static final String CLIENT_SECRET_JWT = "client_secret_jwt";
     public static final String PRIVATE_KEY_JWT = "private_key_jwt";
+    public static final String TLS_CLIENT_AUTH = "tls_client_auth";
 
     // https://tools.ietf.org/html/rfc7636#section-4.3
     public static final String CODE_CHALLENGE_PARAM = "code_challenge";
@@ -269,9 +270,18 @@ public class OIDCLoginProtocol implements LoginProtocol {
 
         String redirect = authSession.getRedirectUri();
         String state = authSession.getClientNote(OIDCLoginProtocol.STATE_PARAM);
-        OIDCRedirectUriBuilder redirectUri = OIDCRedirectUriBuilder.fromUri(redirect, responseMode).addParam(OAuth2Constants.ERROR, translateError(error));
-        if (state != null)
+        OIDCRedirectUriBuilder redirectUri = OIDCRedirectUriBuilder.fromUri(redirect, responseMode);
+        
+        if (error != Error.CANCELLED_AIA_SILENT) {
+            redirectUri.addParam(OAuth2Constants.ERROR, translateError(error));
+        }
+        if (error == Error.CANCELLED_AIA) {
+            redirectUri.addParam(OAuth2Constants.ERROR_DESCRIPTION, "User cancelled aplication-initiated action.");
+        }
+        if (state != null) {
             redirectUri.addParam(OAuth2Constants.STATE, state);
+        }
+        
         new AuthenticationSessionManager(session).removeAuthenticationSession(realm, authSession, true);
         return redirectUri.build();
     }
@@ -279,6 +289,8 @@ public class OIDCLoginProtocol implements LoginProtocol {
     private String translateError(Error error) {
         switch (error) {
             case CANCELLED_BY_USER:
+            case CANCELLED_AIA:
+                return OAuthErrorException.INTERACTION_REQUIRED;
             case CONSENT_DENIED:
                 return OAuthErrorException.ACCESS_DENIED;
             case PASSIVE_INTERACTION_REQUIRED:

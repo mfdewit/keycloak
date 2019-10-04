@@ -20,7 +20,9 @@ package org.keycloak.protocol.oidc;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.authentication.ClientAuthenticator;
 import org.keycloak.authentication.ClientAuthenticatorFactory;
+import org.keycloak.crypto.CekManagementProvider;
 import org.keycloak.crypto.ClientSignatureVerifierProvider;
+import org.keycloak.crypto.ContentEncryptionProvider;
 import org.keycloak.crypto.SignatureProvider;
 import org.keycloak.jose.jws.Algorithm;
 import org.keycloak.models.ClientScopeModel;
@@ -58,7 +60,7 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
     public static final List<String> DEFAULT_CLIENT_AUTH_SIGNING_ALG_VALUES_SUPPORTED = list(Algorithm.RS256.toString());
 
     // The exact list depends on protocolMappers
-    public static final List<String> DEFAULT_CLAIMS_SUPPORTED= list("aud", "sub", "iss", IDToken.AUTH_TIME, IDToken.NAME, IDToken.GIVEN_NAME, IDToken.FAMILY_NAME, IDToken.PREFERRED_USERNAME, IDToken.EMAIL);
+    public static final List<String> DEFAULT_CLAIMS_SUPPORTED= list("aud", "sub", "iss", IDToken.AUTH_TIME, IDToken.NAME, IDToken.GIVEN_NAME, IDToken.FAMILY_NAME, IDToken.PREFERRED_USERNAME, IDToken.EMAIL, IDToken.ACR);
 
     public static final List<String> DEFAULT_CLAIM_TYPES_SUPPORTED= list("normal");
 
@@ -90,6 +92,8 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setRegistrationEndpoint(RealmsResource.clientRegistrationUrl(uriInfo).path(ClientRegistrationService.class, "provider").build(realm.getName(), OIDCClientRegistrationProviderFactory.ID).toString());
 
         config.setIdTokenSigningAlgValuesSupported(getSupportedSigningAlgorithms(false));
+        config.setIdTokenEncryptionAlgValuesSupported(getSupportedIdTokenEncryptionAlg(false));
+        config.setIdTokenEncryptionEncValuesSupported(getSupportedIdTokenEncryptionEnc(false));
         config.setUserInfoSigningAlgValuesSupported(getSupportedSigningAlgorithms(true));
         config.setRequestObjectSigningAlgValuesSupported(getSupportedClientSigningAlgorithms(true));
         config.setResponseTypesSupported(DEFAULT_RESPONSE_TYPES_SUPPORTED);
@@ -165,6 +169,28 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
     private List<String> getSupportedClientSigningAlgorithms(boolean includeNone) {
         List<String> result = new LinkedList<>();
         for (ProviderFactory s : session.getKeycloakSessionFactory().getProviderFactories(ClientSignatureVerifierProvider.class)) {
+            result.add(s.getId());
+        }
+        if (includeNone) {
+            result.add("none");
+        }
+        return result;
+    }
+
+    private List<String> getSupportedIdTokenEncryptionAlg(boolean includeNone) {
+        List<String> result = new LinkedList<>();
+        for (ProviderFactory s : session.getKeycloakSessionFactory().getProviderFactories(CekManagementProvider.class)) {
+            result.add(s.getId());
+        }
+        if (includeNone) {
+            result.add("none");
+        }
+        return result;
+    }
+
+    private List<String> getSupportedIdTokenEncryptionEnc(boolean includeNone) {
+        List<String> result = new LinkedList<>();
+        for (ProviderFactory s : session.getKeycloakSessionFactory().getProviderFactories(ContentEncryptionProvider.class)) {
             result.add(s.getId());
         }
         if (includeNone) {
