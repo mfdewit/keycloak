@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class UserSessionLimitsAuthenticator extends AbstractSessionLimitsAuthenticator {
+
     private static Logger logger = Logger.getLogger(UserSessionLimitsAuthenticator.class);
 
     String behavior;
@@ -35,33 +36,35 @@ public class UserSessionLimitsAuthenticator extends AbstractSessionLimitsAuthent
         int userRealmLimit = getIntConfigProperty(UserSessionLimitsAuthenticatorFactory.USER_REALM_LIMIT, config);
         int userClientLimit = getIntConfigProperty(UserSessionLimitsAuthenticatorFactory.USER_CLIENT_LIMIT, config);
 
-        // Get the session count in this realm for this specific user
-        List<UserSessionModel> userSessionsForRealm = session.sessions().getUserSessions(context.getRealm(), context.getUser());
-        int userSessionCountForRealm = userSessionsForRealm.size();
+        if (context.getRealm() != null && context.getUser() != null) {
 
-        // Get the session count related to the current client for this user
-        ClientModel currentClient = context.getAuthenticationSession().getClient();
-        logger.infof("Client: %s", currentClient.getClientId());
+            // Get the session count in this realm for this specific user
+            List<UserSessionModel> userSessionsForRealm = session.sessions().getUserSessions(context.getRealm(), context.getUser());
+            int userSessionCountForRealm = userSessionsForRealm.size();
 
-        List<UserSessionModel> userSessionsForClient = userSessionsForRealm.stream().filter(session -> session.getAuthenticatedClientSessionByClient(currentClient.getId()) != null).collect(Collectors.toList());
-        int userSessionCountForClient = userSessionsForClient.size();
+            // Get the session count related to the current client for this user
+            ClientModel currentClient = context.getAuthenticationSession().getClient();
+            logger.infof("session-limiter's current keycloak clientId: %s", currentClient.getClientId());
 
-        logger.infof("realm limit: %s", userRealmLimit);
-        logger.infof("client limit: %s", userClientLimit);
-        logger.infof("session-realm-count: %s", userSessionCountForRealm);
-        logger.infof("session-client-count: %s", userSessionCountForClient);
+            List<UserSessionModel> userSessionsForClient = userSessionsForRealm.stream().filter(session -> session.getAuthenticatedClientSessionByClient(currentClient.getId()) != null).collect(Collectors.toList());
+            int userSessionCountForClient = userSessionsForClient.size();
+            logger.infof("session-limiter's configured realm session limit: %s", userRealmLimit);
+            logger.infof("session-limiter's configured client session limit: %s", userClientLimit);
+            logger.infof("session-limiter's count of total user sessions for the entire realm (could be apps other than web apps): %s", userSessionCountForRealm);
+            logger.infof("session-limiter's count of total user sessions for this keycloak client: %s", userSessionCountForClient);
 
-        // First check if the user has too many sessions in this realm
-        if (exceedsLimit(userSessionCountForRealm, userRealmLimit)) {
-            logger.info("Too many session in this realm for the current user.");
-            handleLimitExceeded(context, userSessionsForRealm);
-        }
-        // otherwise if the user is still allowed to create a new session in the realm, check if this applies for this specific client as well.
-        else if (exceedsLimit(userSessionCountForClient, userClientLimit)) {
-            logger.info("Too many sessions related to the current client for this user.");
-            handleLimitExceeded(context, userSessionsForClient);
-        }
-        else {
+            // First check if the user has too many sessions in this realm
+            if (exceedsLimit(userSessionCountForRealm, userRealmLimit)) {
+                logger.info("Too many session in this realm for the current user.");
+                handleLimitExceeded(context, userSessionsForRealm);
+            } // otherwise if the user is still allowed to create a new session in the realm, check if this applies for this specific client as well.
+            else if (exceedsLimit(userSessionCountForClient, userClientLimit)) {
+                logger.info("Too many sessions related to the current client for this user.");
+                handleLimitExceeded(context, userSessionsForClient);
+            } else {
+                context.success();
+            }
+        } else {
             context.success();
         }
     }
@@ -86,4 +89,3 @@ public class UserSessionLimitsAuthenticator extends AbstractSessionLimitsAuthent
         oldest.ifPresent(userSession -> AuthenticationManager.backchannelLogout(session, userSession, true));
     }
 }
-

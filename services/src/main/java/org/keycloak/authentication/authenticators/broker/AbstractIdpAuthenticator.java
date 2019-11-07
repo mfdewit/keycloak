@@ -124,7 +124,7 @@ public abstract class AbstractIdpAuthenticator implements Authenticator {
         UserModel existingUser = session.users().getUserById(duplication.getExistingUserId(), realm);
         if (existingUser == null) {
             throw new AuthenticationFlowException("User with ID '" + existingUserId + "' not found.", AuthenticationFlowError.INVALID_USER);
-        }
+    }
 
         if (!existingUser.isEnabled()) {
             throw new AuthenticationFlowException("User with ID '" + existingUserId + "', username '" + existingUser.getUsername() + "' disabled.", AuthenticationFlowError.USER_DISABLED);
