@@ -24,7 +24,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian</artifactId>
-        <version>8.0.0-SNAPSHOT</version>
+        <version>9.0.1-SNAPSHOT</version>
     </parent>
 
     <packaging>pom</packaging>
@@ -56,6 +56,7 @@
         <auth.server.config.dir>${auth.server.home}</auth.server.config.dir>
 
         <auth.server.host>localhost</auth.server.host>
+        <auth.server.management.host>${auth.server.host}</auth.server.management.host>
         <auth.server.browserHost/> <!-- if set, this host will be used by the browser instead of auth.server.host -->
         <auth.server.port.offset>100</auth.server.port.offset>
         <auth.server.http.port>8180</auth.server.http.port>
@@ -81,6 +82,8 @@
         <auth.server.jboss.jvm.debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=${auth.server.debug.suspend},address=${auth.server.host}:${auth.server.debug.port}</auth.server.jboss.jvm.debug.args>
 
         <auth.server.remote>false</auth.server.remote>
+        <auth.server.quarkus>false</auth.server.quarkus>
+
         <auth.server.profile/>
         <auth.server.feature/>
 
@@ -178,7 +181,6 @@
         <backends.console.output>true</backends.console.output>
 
         <testsuite.constants>${project.build.directory}/dependency/test-constants.properties</testsuite.constants>
-        <testsuite.ui.layout>0</testsuite.ui.layout> <!-- this is to tell the UI tests what type of layout to expect (doesn't setup the layout, just what to expect); 0 == desktop layout, 1 == smartphone layout, 2 == tablet layout -->
 
         <skip.add.user.json>false</skip.add.user.json>
         <skip.clean.second.cache>true</skip.clean.second.cache>
@@ -224,6 +226,25 @@
                                 <outputDirectory>${containers.home}</outputDirectory>
                                 <overWriteIfNewer>true</overWriteIfNewer>
                                 <skip>${auth.server.jboss.skip.unpack}</skip>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>unpack-undertow-server</id>
+                            <phase>generate-test-resources</phase>
+                            <goals>
+                                <goal>unpack</goal>
+                            </goals>
+                            <configuration>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>org.keycloak.testsuite</groupId>
+                                        <artifactId>integration-arquillian-servers-auth-server-undertow</artifactId>
+                                        <version>${project.version}</version>
+                                        <type>jar</type>
+                                        <outputDirectory>${containers.home}/auth-server-undertow</outputDirectory>
+                                    </artifactItem>
+                                </artifactItems>
+                                <includes>*.jks,*.crt,*.truststore,*.crl,*.key,certs/clients/*</includes>
                             </configuration>
                         </execution>
                         <execution>
@@ -424,6 +445,7 @@
                             <auth.server.java.home>${auth.server.java.home}</auth.server.java.home>
 
                             <auth.server.host>${auth.server.host}</auth.server.host>
+                            <auth.server.management.host>${auth.server.management.host}</auth.server.management.host>
                             <auth.server.browserHost>${auth.server.browserHost}</auth.server.browserHost>
                             <auth.server.port.offset>${auth.server.port.offset}</auth.server.port.offset>
                             <auth.server.http.port>${auth.server.http.port}</auth.server.http.port>
@@ -467,6 +489,7 @@
                             <backends.console.output>${backend.console.output}</backends.console.output>
 
                             <auth.server.remote>${auth.server.remote}</auth.server.remote>
+                            <auth.server.quarkus>${auth.server.quarkus}</auth.server.quarkus>
 
                             <adapter.test.props>${adapter.test.props}</adapter.test.props>
                             <examples.home>${examples.home}</examples.home>
@@ -475,7 +498,6 @@
                             <kie.maven.settings>${kie.maven.settings}</kie.maven.settings>
 
                             <testsuite.constants>${testsuite.constants}</testsuite.constants>
-                            <testsuite.ui.layout>${testsuite.ui.layout}</testsuite.ui.layout>
                             <cli.log.output>${cli.log.output}</cli.log.output>
                             <test.intermittent>${test.intermittent}</test.intermittent>
 
@@ -639,6 +661,16 @@
                     <version>${wildfly.core.version}</version>
                 </dependency>
             </dependencies>
+        </profile>
+
+        <profile>
+            <id>auth-server-quarkus</id>
+            <properties>
+                <auth.server>quarkus</auth.server>
+                <auth.server.quarkus>true</auth.server.quarkus>
+                <auth.server.jboss>false</auth.server.jboss>
+                <auth.server.undertow>false</auth.server.undertow>
+            </properties>
         </profile>
 
         <profile>

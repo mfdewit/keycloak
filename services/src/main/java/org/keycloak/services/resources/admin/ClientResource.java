@@ -24,6 +24,7 @@ import org.keycloak.authorization.admin.AuthorizationService;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.common.Profile;
 import org.keycloak.common.util.Time;
+import org.keycloak.events.Errors;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.AuthenticatedClientSessionModel;
@@ -63,6 +64,7 @@ import org.keycloak.services.validation.ClientValidator;
 import org.keycloak.services.validation.PairwiseClientValidator;
 import org.keycloak.services.validation.ValidationMessages;
 import org.keycloak.utils.ProfileHelper;
+import org.keycloak.validation.ClientValidationUtil;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
@@ -151,10 +153,16 @@ public class ClientResource {
 
         try {
             updateClientFromRep(rep, client, session);
+
+            ClientValidationUtil.validate(session, client, false, c -> {
+                session.getTransactionManager().setRollbackOnly();
+                throw new ErrorResponseException(Errors.INVALID_INPUT ,c.getError(), Response.Status.BAD_REQUEST);
+            });
+
             adminEvent.operation(OperationType.UPDATE).resourcePath(session.getContext().getUri()).representation(rep).success();
             return Response.noContent().build();
         } catch (ModelDuplicateException e) {
-            return ErrorResponse.exists("Client " + rep.getClientId() + " already exists");
+            return ErrorResponse.exists("Client already exists");
         }
     }
 
@@ -195,7 +203,7 @@ public class ClientResource {
 
         ClientInstallationProvider provider = session.getProvider(ClientInstallationProvider.class, providerId);
         if (provider == null) throw new NotFoundException("Unknown Provider");
-        return provider.generateInstallation(session, realm, client, keycloak.getBaseUri(session.getContext().getUri()));
+        return provider.generateInstallation(session, realm, client, session.getContext().getUri().getBaseUri());
     }
 
     /**
@@ -331,7 +339,7 @@ public class ClientResource {
 
         ClientScopeModel clientScope = realm.getClientScopeById(clientScopeId);
         if (clientScope == null) {
-            throw new org.jboss.resteasy.spi.NotFoundException("Client scope not found");
+            throw new javax.ws.rs.NotFoundException("Client scope not found");
         }
         client.addClientScope(clientScope, defaultScope);
 
@@ -347,7 +355,7 @@ public class ClientResource {
 
         ClientScopeModel clientScope = realm.getClientScopeById(clientScopeId);
         if (clientScope == null) {
-            throw new org.jboss.resteasy.spi.NotFoundException("Client scope not found");
+            throw new javax.ws.rs.NotFoundException("Client scope not found");
         }
         client.removeClientScope(clientScope);
 
@@ -424,7 +432,7 @@ public class ClientResource {
         auth.clients().requireConfigure(client);
 
         adminEvent.operation(OperationType.ACTION).resourcePath(session.getContext().getUri()).resource(ResourceType.CLIENT).success();
-        return new ResourceAdminManager(session).pushClientRevocationPolicy(session.getContext().getUri().getRequestUri(), realm, client);
+        return new ResourceAdminManager(session).pushClientRevocationPolicy(realm, client);
 
     }
 
@@ -598,7 +606,7 @@ public class ClientResource {
         auth.clients().requireConfigure(client);
 
         logger.debug("Test availability of cluster nodes");
-        GlobalRequestResult result = new ResourceAdminManager(session).testNodesAvailability(session.getContext().getUri().getRequestUri(), realm, client);
+        GlobalRequestResult result = new ResourceAdminManager(session).testNodesAvailability(realm, client);
         adminEvent.operation(OperationType.ACTION).resource(ResourceType.CLUSTER_NODE).resourcePath(session.getContext().getUri()).representation(result).success();
         return result;
     }
@@ -676,7 +684,7 @@ public class ClientResource {
             }
         }
 
-        if (!rep.getClientId().equals(client.getClientId())) {
+        if (rep.getClientId() != null && !rep.getClientId().equals(client.getClientId())) {
             new ClientManager(new RealmManager(session)).clientIdChanged(client, rep.getClientId());
         }
 

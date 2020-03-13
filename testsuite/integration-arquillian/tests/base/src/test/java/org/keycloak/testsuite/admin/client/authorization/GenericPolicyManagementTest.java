@@ -17,20 +17,19 @@
  */
 package org.keycloak.testsuite.admin.client.authorization;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
+import org.keycloak.admin.client.resource.AuthorizationResource;
 import org.keycloak.admin.client.resource.PoliciesResource;
 import org.keycloak.admin.client.resource.PolicyResource;
 import org.keycloak.admin.client.resource.ResourceResource;
 import org.keycloak.admin.client.resource.ResourceScopeResource;
 import org.keycloak.admin.client.resource.ResourceScopesResource;
 import org.keycloak.admin.client.resource.ResourcesResource;
-import org.keycloak.common.Profile;
 import org.keycloak.representations.idm.authorization.DecisionStrategy;
 import org.keycloak.representations.idm.authorization.Logic;
 import org.keycloak.representations.idm.authorization.PolicyProviderRepresentation;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
+import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
 
@@ -40,6 +39,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -54,7 +54,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class GenericPolicyManagementTest extends AbstractAuthorizationTest {
 
-    private static final String[] EXPECTED_BUILTIN_POLICY_PROVIDERS = {"test", "user", "role", "rules", "js", "time", "aggregate", "scope", "resource"};
+    private static final String[] EXPECTED_BUILTIN_POLICY_PROVIDERS = {"test", "user", "role", "js", "time", "aggregate", "scope", "resource"};
 
     @Test
     public void testCreate() {
@@ -146,11 +146,42 @@ public class GenericPolicyManagementTest extends AbstractAuthorizationTest {
         assertFalse(providers.isEmpty());
         List expected = new ArrayList(Arrays.asList(EXPECTED_BUILTIN_POLICY_PROVIDERS));
 
-        if (!Profile.isFeatureEnabled(Profile.Feature.AUTHZ_DROOLS_POLICY)) {
-            expected.remove("rules");
-        }
-
         assertTrue(providers.containsAll(expected));
+    }
+
+    @Test
+    public void testQueryPolicyByIdAllFields() {
+        PolicyResource policy = createTestingPolicy();
+        PolicyRepresentation representation = policy.toRepresentation("*");
+        Set<ResourceRepresentation> resources = representation.getResourcesData();
+        
+        assertEquals(3, resources.size());
+
+        representation = policy.toRepresentation();
+        assertNull(representation.getResourcesData());
+    }
+
+    @Test
+    public void testQueryPolicyAllFields() {
+        AuthorizationResource authorization = getClientResource().authorization();
+
+        authorization.resources().create(new ResourceRepresentation("Resource A"));
+        ResourcePermissionRepresentation permission = new ResourcePermissionRepresentation();
+        permission.setName("Permission A");
+        permission.addResource("Resource A");
+        authorization.permissions().resource().create(permission);
+        
+        List<PolicyRepresentation> policies = authorization.policies()
+                .policies(null, "Permission A", null, null, null, true, null, "*", -1, -1);
+        
+        assertEquals(1, policies.size());
+        assertEquals(1, policies.get(0).getResourcesData().size());
+
+        policies = authorization.policies()
+                .policies(null, "Permission A", null, null, null, true, null, null, -1, -1);
+
+        assertEquals(1, policies.size());
+        assertNull(policies.get(0).getResourcesData());
     }
 
     private PolicyResource createTestingPolicy() {

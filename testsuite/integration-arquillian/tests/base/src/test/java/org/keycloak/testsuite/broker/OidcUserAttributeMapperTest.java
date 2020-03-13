@@ -6,7 +6,6 @@ import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
-
 public class OidcUserAttributeMapperTest extends AbstractUserAttributeMapperTest {
 
     @Override
@@ -20,7 +19,7 @@ public class OidcUserAttributeMapperTest extends AbstractUserAttributeMapperTest
         attrMapper1.setName("attribute-mapper");
         attrMapper1.setIdentityProviderMapper(UserAttributeMapper.PROVIDER_ID);
         attrMapper1.setConfig(ImmutableMap.<String,String>builder()
-          .put(UserAttributeMapper.CLAIM, ATTRIBUTE_TO_MAP_NAME)
+          .put(UserAttributeMapper.CLAIM, KcOidcBrokerConfiguration.ATTRIBUTE_TO_MAP_NAME)
           .put(UserAttributeMapper.USER_ATTRIBUTE, MAPPED_ATTRIBUTE_NAME)
           .build());
 

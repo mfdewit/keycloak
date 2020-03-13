@@ -16,6 +16,8 @@
  */
 package org.keycloak.testsuite.pages;
 
+import org.openqa.selenium.By;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
 
@@ -29,6 +31,9 @@ public class LoginConfigTotpPage extends AbstractPage {
 
     @FindBy(id = "totp")
     private WebElement totpInput;
+
+    @FindBy(id = "userLabel")
+    private WebElement totpLabelInput;
 
     @FindBy(css = "input[type=\"submit\"]")
     private WebElement submitButton;
@@ -50,6 +55,12 @@ public class LoginConfigTotpPage extends AbstractPage {
         submitButton.click();
     }
 
+    public void configure(String totp, String userLabel) {
+        totpInput.sendKeys(totp);
+        totpLabelInput.sendKeys(userLabel);
+        submitButton.click();
+    }
+
     public void submit() {
         submitButton.click();
     }
@@ -63,7 +74,12 @@ public class LoginConfigTotpPage extends AbstractPage {
     }
 
     public boolean isCurrent() {
-        return PageUtils.getPageTitle(driver).equals("Mobile Authenticator Setup");
+        try {
+            driver.findElement(By.id("totp"));
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     public void open() {
@@ -80,6 +96,14 @@ public class LoginConfigTotpPage extends AbstractPage {
 
     public String getError() {
         return loginErrorMessage.getText();
+    }
+
+    public boolean isCancelDisplayed() {
+        try {
+            return cancelAIAButton.isDisplayed();
+        } catch (NoSuchElementException e) {
+            return false;
+        }
     }
 
 }

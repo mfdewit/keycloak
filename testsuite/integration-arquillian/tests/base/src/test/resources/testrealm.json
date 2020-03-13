@@ -120,6 +120,48 @@
         "test-app": [ "customer-user" ],
         "account": [ "view-profile", "manage-account" ]
       }
+    },
+    {
+      "username" : "user-with-one-configured-otp",
+      "enabled": true,
+      "email" : "otp1@redhat.com",
+      "credentials" : [
+        {
+          "type" : "password",
+          "value" : "password"
+        },
+        {
+          "id" : "unique",
+          "type" : "otp",
+          "secretData" : "{\"value\":\"DJmQfC73VGFhw7D4QJ8A\"}",
+          "credentialData" : "{\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\",\"subType\":\"totp\"}"
+        }
+      ]
+    },
+    {
+      "username" : "user-with-two-configured-otp",
+      "enabled": true,
+      "email" : "otp2@redhat.com",
+      "realmRoles": ["user"],
+      "credentials" : [
+        {
+          "id" : "first",
+          "userLabel" : "first",
+          "type" : "otp",
+          "secretData" : "{\"value\":\"DJmQfC73VGFhw7D4QJ8A\"}",
+          "credentialData" : "{\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\",\"subType\":\"totp\"}"
+        },
+        {
+          "type" : "password",
+          "value" : "password"
+        },
+        {
+          "id" : "second",
+          "type" : "otp",
+          "secretData" : "{\"value\":\"ABCQfC73VGFhw7D4QJ8A\"}",
+          "credentialData" : "{\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\",\"subType\":\"totp\"}"
+        }
+      ]
     }
   ],
   "scopeMappings": [
@@ -173,6 +215,7 @@
     },
     {
       "clientId" : "third-party",
+      "description" : "A third party application",
       "enabled": true,
       "consentRequired": true,
 
@@ -430,7 +473,12 @@
         },
         {
           "name": "sample-client-role",
-          "description": "Sample client role"
+          "description": "Sample client role",
+          "attributes": {
+            "sample-client-role-attribute": [
+              "sample-client-role-attribute-value"
+            ]
+          }
         },
         {
           "name": "customer-admin-composite-role",

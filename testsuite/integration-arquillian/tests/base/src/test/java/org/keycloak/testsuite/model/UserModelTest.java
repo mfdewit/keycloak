@@ -17,25 +17,28 @@
 
 package org.keycloak.testsuite.model;
 
-import com.google.common.collect.ImmutableMap;
-import org.jboss.arquillian.container.test.api.Deployment;
-import org.jboss.arquillian.container.test.api.TargetsContainer;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Assert;
 import org.junit.Test;
-import org.keycloak.admin.client.resource.UserResource;
-import org.keycloak.models.*;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.RoleModel;
+import org.keycloak.models.UserModel;
 import org.keycloak.models.UserModel.RequiredAction;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.managers.ClientManager;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
 import org.keycloak.testsuite.arquillian.annotation.ModelTest;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.util.RealmBuilder;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.hamcrest.Matchers.contains;
@@ -45,22 +48,13 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertNotNull;
-import static org.keycloak.testsuite.arquillian.DeploymentTargetModifier.AUTH_SERVER_CURRENT;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
+@AuthServerContainerExclude(AuthServer.REMOTE)
 public class UserModelTest extends AbstractTestRealmKeycloakTest {
-
-    @Deployment
-    @TargetsContainer(AUTH_SERVER_CURRENT)
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(UserResource.class, UserModelTest.class)
-                .addPackages(true,
-                        "org.keycloak.testsuite",
-                        "org.keycloak.testsuite.model",
-                        "com.google.common");
-    }
 
     @Override
     public void addTestRealms(List<RealmRepresentation> testRealms) {
@@ -321,21 +315,22 @@ public class UserModelTest extends AbstractTestRealmKeycloakTest {
             KeycloakSession currentSession = sesUpdateUserSingleAtr;
             RealmModel realm = currentSession.realms().getRealmByName("original");
 
-
-            Map<String, List<String>> expected = ImmutableMap.of(
-                    "key1", Arrays.asList("value3"),
-                    "key2", Arrays.asList("value2"));
-            expectedAtomic.set(expected);
+            Map<String, List<String>> expected = new HashMap<>();
+            expected.put("key1", Arrays.asList("value3"));
+            expected.put("key2", Arrays.asList("value2"));
 
             UserModel user = currentSession.users().addUser(realm, "user");
 
             user.setSingleAttribute("key1", "value1");
             user.setSingleAttribute("key2", "value2");
+            user.setSingleAttribute("key3", null); //KEYCLOAK-7014
 
             // Overwrite the first attribute
             user.setSingleAttribute("key1", "value3");
 
             Assert.assertThat(user.getAttributes(), equalTo(expected));
+
+            expectedAtomic.set(expected);
         });
 
         KeycloakModelUtils.runJobInTransaction(session.getKeycloakSessionFactory(), (KeycloakSession sesUpdateUserSingleAtr2) -> {

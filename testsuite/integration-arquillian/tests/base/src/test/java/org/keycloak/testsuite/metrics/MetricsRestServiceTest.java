@@ -36,6 +36,7 @@ import static org.keycloak.testsuite.util.Matchers.statusCodeIs;
 public class MetricsRestServiceTest extends AbstractKeycloakTest {
 
     private static final String MGMT_PORT = System.getProperty("auth.server.management.port", "10090");
+    private static final String MGMT_HOST = System.getProperty("auth.server.management.host", "localhost");
 
     @Override
     public void addTestRealms(List<RealmRepresentation> testRealms) {
@@ -51,21 +52,21 @@ public class MetricsRestServiceTest extends AbstractKeycloakTest {
     public void testHealthEndpoint() {
         Client client = ClientBuilder.newClient();
 
-        try (Response response = client.target("http://localhost:" + MGMT_PORT + "/health").request().get()) {
+        try (Response response = client.target("http://" + MGMT_HOST + ":" + MGMT_PORT + "/health").request().get()) {
             Assert.assertThat(response, statusCodeIs(Status.OK));
-            Assert.assertThat(response, body(containsString("{\"outcome\":\"UP\",\"checks\":[]}")));
+            Assert.assertThat(response, body(containsString("{\"status\":\"UP\",\"checks\":[]}")));
         } finally {
             client.close();
         }
     }
 
     @Test
-    public void testMetricsEndpoint() {
+    public void  testMetricsEndpoint() {
         Client client = ClientBuilder.newClient();
 
-        try (Response response = client.target("http://localhost:" + MGMT_PORT + "/metrics").request().get()) {
+        try (Response response = client.target("http://" + MGMT_HOST + ":" + MGMT_PORT + "/metrics").request().get()) {
             Assert.assertThat(response, statusCodeIs(Status.OK));
-            Assert.assertThat(response, body(containsString("base:classloader_total_loaded_class_count")));
+            Assert.assertThat(response, body(containsString("base_memory_maxHeap_bytes")));
         } finally {
             client.close();
         }

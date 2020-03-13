@@ -16,11 +16,13 @@
  */
 package org.keycloak.testsuite.oidc;
 
+import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.OAuth2Constants;
+import org.keycloak.OAuthErrorException;
 import org.keycloak.admin.client.resource.ClientResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
@@ -71,6 +73,8 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
 import static org.keycloak.testsuite.admin.AbstractAdminTest.loadJson;
 import static org.keycloak.testsuite.util.OAuthClient.AUTH_SERVER_ROOT;
 
@@ -296,11 +300,17 @@ public class UserInfoTest extends AbstractKeycloakTest {
         try {
             AccessTokenResponse accessTokenResponse = executeGrantAccessTokenRequest(client);
 
-            testingClient.testing().removeUserSessions("test");
+            String realmName = "test";
+            testingClient.testing().removeUserSessions(realmName);
 
             Response response = UserInfoClientUtil.executeUserInfoRequest_getMethod(client, accessTokenResponse.getToken());
 
             assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+            String wwwAuthHeader = response.getHeaderString(HttpHeaders.WWW_AUTHENTICATE);
+            assertNotNull(wwwAuthHeader);
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("Bearer"));
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("realm=\"" + realmName + "\""));
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("error=\"" + OAuthErrorException.INVALID_REQUEST + "\""));
 
             response.close();
 
@@ -328,6 +338,11 @@ public class UserInfoTest extends AbstractKeycloakTest {
             Response response = UserInfoClientUtil.executeUserInfoRequest_getMethod(client, accessTokenResponse.getToken());
 
             assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+
+            String wwwAuthHeader = response.getHeaderString(HttpHeaders.WWW_AUTHENTICATE);
+            assertNotNull(wwwAuthHeader);
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("Bearer"));
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("error=\"" + OAuthErrorException.INVALID_TOKEN + "\""));
 
             response.close();
 
@@ -367,6 +382,11 @@ public class UserInfoTest extends AbstractKeycloakTest {
 
             assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
 
+            String wwwAuthHeader = response.getHeaderString(HttpHeaders.WWW_AUTHENTICATE);
+            assertNotNull(wwwAuthHeader);
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("Bearer"));
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("error=\"" + OAuthErrorException.INVALID_TOKEN + "\""));
+
             response.close();
 
             events.expect(EventType.USER_INFO_REQUEST_ERROR)
@@ -376,6 +396,65 @@ public class UserInfoTest extends AbstractKeycloakTest {
                     .detail(Details.AUTH_METHOD, Details.VALIDATE_ACCESS_TOKEN)
                     .client("test-app")
                     .assertEvent();
+        } finally {
+            client.close();
+        }
+    }
+
+    @Test
+    public void testNotBeforeTokens() {
+        Client client = ClientBuilder.newClient();
+
+        try {
+            AccessTokenResponse accessTokenResponse = executeGrantAccessTokenRequest(client);
+
+            int time = Time.currentTime() + 60;
+
+            RealmResource realm = adminClient.realm("test");
+            RealmRepresentation rep = realm.toRepresentation();
+            rep.setNotBefore(time);
+            realm.update(rep);
+
+            Response response = UserInfoClientUtil.executeUserInfoRequest_getMethod(client, accessTokenResponse.getToken());
+
+            assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+
+            response.close();
+
+            events.expect(EventType.USER_INFO_REQUEST_ERROR)
+                    .error(Errors.INVALID_TOKEN)
+                    .user(Matchers.nullValue(String.class))
+                    .session(Matchers.nullValue(String.class))
+                    .detail(Details.AUTH_METHOD, Details.VALIDATE_ACCESS_TOKEN)
+                    .client((String) null)
+                    .assertEvent();
+
+            events.clear();
+            rep.setNotBefore(0);
+            realm.update(rep);
+
+            // do the same with client's notBefore
+            ClientResource clientResource = realm.clients().get(realm.clients().findByClientId("test-app").get(0).getId());
+            ClientRepresentation clientRep = clientResource.toRepresentation();
+            clientRep.setNotBefore(time);
+            clientResource.update(clientRep);
+
+            response = UserInfoClientUtil.executeUserInfoRequest_getMethod(client, accessTokenResponse.getToken());
+
+            assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+
+            response.close();
+
+            events.expect(EventType.USER_INFO_REQUEST_ERROR)
+                    .error(Errors.INVALID_TOKEN)
+                    .user(Matchers.nullValue(String.class))
+                    .session(Matchers.nullValue(String.class))
+                    .detail(Details.AUTH_METHOD, Details.VALIDATE_ACCESS_TOKEN)
+                    .client((String) null)
+                    .assertEvent();
+
+            clientRep.setNotBefore(0);
+            clientResource.update(clientRep);
         } finally {
             client.close();
         }
@@ -410,6 +489,11 @@ public class UserInfoTest extends AbstractKeycloakTest {
 
             assertEquals(Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
 
+            String wwwAuthHeader = response.getHeaderString(HttpHeaders.WWW_AUTHENTICATE);
+            assertNotNull(wwwAuthHeader);
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("Bearer"));
+            assertThat(wwwAuthHeader, CoreMatchers.containsString("error=\"" + OAuthErrorException.INVALID_TOKEN + "\""));
+
             events.expect(EventType.USER_INFO_REQUEST_ERROR)
                     .error(Errors.INVALID_TOKEN)
                     .client((String) null)
@@ -418,6 +502,19 @@ public class UserInfoTest extends AbstractKeycloakTest {
                     .detail(Details.AUTH_METHOD, Details.VALIDATE_ACCESS_TOKEN)
                     .assertEvent();
 
+        } finally {
+            client.close();
+        }
+    }
+
+    @Test
+    public void testUnsuccessfulUserInfoRequestWithEmptyAccessToken() {
+        Client client = ClientBuilder.newClient();
+
+        try {
+            Response response = UserInfoClientUtil.executeUserInfoRequest_getMethod(client, "");
+            response.close();
+            assertEquals(Status.BAD_REQUEST.getStatusCode(), response.getStatus());
         } finally {
             client.close();
         }

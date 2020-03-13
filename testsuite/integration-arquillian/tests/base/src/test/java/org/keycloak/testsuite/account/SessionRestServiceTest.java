@@ -20,8 +20,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
-import static org.keycloak.common.Profile.Feature.ACCOUNT_API;
-import static org.keycloak.testsuite.ProfileAssume.assumeFeatureEnabled;
 
 import java.io.IOException;
 import java.util.List;
@@ -30,7 +28,6 @@ import java.util.stream.Collectors;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.hamcrest.Matchers;
 import org.jboss.arquillian.drone.api.annotation.Drone;
-import org.junit.Before;
 import org.junit.Test;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.broker.provider.util.SimpleHttp;
@@ -38,6 +35,8 @@ import org.keycloak.representations.account.ClientRepresentation;
 import org.keycloak.representations.account.DeviceRepresentation;
 import org.keycloak.representations.account.SessionRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.ContainerAssume;
 import org.keycloak.testsuite.util.OAuthClient;
@@ -96,8 +95,6 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
 
     @Test
     public void testProfilePreviewPermissions() throws IOException {
-        assumeFeatureEnabled(ACCOUNT_API);
-
         TokenUtil noaccessToken = new TokenUtil("no-account-access", "password");
         TokenUtil viewToken = new TokenUtil("view-account-access", "password");
 
@@ -124,14 +121,8 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
                         .auth(viewToken.getToken()).asStatus());
     }
 
-    @Before
-    @Override
-    public void before() {
-        super.before();
-        assumeFeatureEnabled(ACCOUNT_API);
-    }
-
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testGetSessions() throws Exception {
         oauth.setDriver(secondBrowser);
         codeGrant("public-client-0");
@@ -151,6 +142,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testGetDevicesResponse() throws Exception {
         oauth.setBrowserHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0) Gecko/20100101 Firefox/15.0.1");
         OAuthClient.AccessTokenResponse tokenResponse = codeGrant("public-client-0");
@@ -349,6 +341,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testNullOrEmptyUserAgent() throws Exception {
         oauth.setBrowserHeader("User-Agent", null);
         OAuthClient.AccessTokenResponse tokenResponse = codeGrant("public-client-0");
@@ -364,8 +357,8 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         assertEquals("Other", device.getDevice());
 
         List<SessionRepresentation> sessions = device.getSessions();
-        assertEquals(2, sessions.size());
-        SessionRepresentation session = sessions.stream().filter(rep -> rep.getCurrent() != null && rep.getCurrent()).findFirst().get();
+        assertEquals(1, sessions.size());
+        SessionRepresentation session = sessions.get(0);
         assertEquals("127.0.0.1", session.getIpAddress());
         assertEquals(device.getLastAccess(), session.getLastAccess());
 

@@ -634,6 +634,18 @@ public class RealmAdapter implements CachedRealmModel {
     }
 
     @Override
+    public WebAuthnPolicy getWebAuthnPolicyPasswordless() {
+        if (isUpdated()) return updated.getWebAuthnPolicyPasswordless();
+        return cached.getWebAuthnPasswordlessPolicy();
+    }
+
+    @Override
+    public void setWebAuthnPolicyPasswordless(WebAuthnPolicy policy) {
+        getDelegateForUpdate();
+        updated.setWebAuthnPolicyPasswordless(policy);
+    }
+
+    @Override
     public RoleModel getRoleById(String id) {
         if (isUpdated()) return updated.getRoleById(id);
         return cacheSession.getRoleById(id, this);
@@ -693,7 +705,11 @@ public class RealmAdapter implements CachedRealmModel {
     @Override
     public List<ClientModel> getClients() {
         return cacheSession.getClients(this);
+    }
 
+    @Override
+    public List<ClientModel> getAlwaysDisplayInConsoleClients() {
+        return cacheSession.getAlwaysDisplayInConsoleClients(this);
     }
 
     @Override
@@ -720,6 +736,21 @@ public class RealmAdapter implements CachedRealmModel {
     @Override
     public ClientModel getClientByClientId(String clientId) {
         return cacheSession.getClientByClientId(clientId, this);
+    }
+
+    @Override
+    public List<ClientModel> searchClientByClientId(String clientId, Integer firstResult, Integer maxResults) {
+        return cacheSession.searchClientsByClientId(clientId, firstResult, maxResults, this);
+    }
+
+    @Override
+    public List<ClientModel> getClients(Integer firstResult, Integer maxResults) {
+        return cacheSession.getClients(this, firstResult, maxResults);
+    }
+
+    @Override
+    public Long getClientsCount() {
+        return cacheSession.getClientsCount(this);
     }
 
     @Override
@@ -942,8 +973,17 @@ public class RealmAdapter implements CachedRealmModel {
     public Set<RoleModel> getRoles() {
         return cacheSession.getRealmRoles(this);
     }
+    
+    @Override
+    public Set<RoleModel> getRoles(Integer first, Integer max) {
+        return cacheSession.getRealmRoles(this, first, max);
+    }
 
-
+    @Override
+    public Set<RoleModel> searchForRoles(String search, Integer first, Integer max) {
+        return cacheSession.searchForRoles(this, search, first, max);
+    }
+    
     @Override
     public RoleModel addRole(String name) {
         return cacheSession.addRealmRole(this, name);
@@ -970,7 +1010,7 @@ public class RealmAdapter implements CachedRealmModel {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || !(o instanceof RealmModel)) return false;
+        if (!(o instanceof RealmModel)) return false;
 
         RealmModel that = (RealmModel) o;
         return that.getId().equals(getId());
@@ -1214,6 +1254,12 @@ public class RealmAdapter implements CachedRealmModel {
     }
 
     @Override
+    public AuthenticationExecutionModel getAuthenticationExecutionByFlowId(String flowId) {
+        if (isUpdated()) return updated.getAuthenticationExecutionByFlowId(flowId);
+        return cached.getAuthenticationExecutionByFlowId(flowId);
+    }
+
+    @Override
     public AuthenticationExecutionModel addAuthenticatorExecution(AuthenticationExecutionModel model) {
         getDelegateForUpdate();
         return updated.addAuthenticatorExecution(model);
@@ -1306,13 +1352,8 @@ public class RealmAdapter implements CachedRealmModel {
     }
 
     @Override
-    public GroupModel createGroup(String name) {
-        return cacheSession.createGroup(this, name);
-    }
-
-    @Override
-    public GroupModel createGroup(String id, String name) {
-        return cacheSession.createGroup(this, id, name);
+    public GroupModel createGroup(String id, String name, GroupModel toParent) {
+        return cacheSession.createGroup(this, id, name, toParent);
     }
 
     @Override
@@ -1365,7 +1406,7 @@ public class RealmAdapter implements CachedRealmModel {
         if (isUpdated()) return updated.getClientScopes();
         List<String> clientScopes = cached.getClientScopes();
         if (clientScopes.isEmpty()) return Collections.EMPTY_LIST;
-        List<ClientScopeModel> apps = new LinkedList<ClientScopeModel>();
+        List<ClientScopeModel> apps = new LinkedList<>();
         for (String id : clientScopes) {
             ClientScopeModel model = cacheSession.getClientScopeById(id, this);
             if (model == null) {

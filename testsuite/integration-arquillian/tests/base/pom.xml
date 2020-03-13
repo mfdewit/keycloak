@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian-tests</artifactId>
-        <version>8.0.0-SNAPSHOT</version>
+        <version>9.0.1-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -41,6 +41,7 @@
         <!--exclude cluster tests by default, enabled by 'auth-server-*-cluster' profiles in tests/pom.xml-->
         <exclude.cluster>**/cluster/**/*Test.java</exclude.cluster>
         <exclude.crossdc>**/crossdc/**/*Test.java</exclude.crossdc>
+        <mvel.version>2.4.0.Final</mvel.version>
     </properties>
     
     <dependencies>
@@ -115,6 +116,15 @@
             <artifactId>photoz-restful-api</artifactId>
             <version>${project.version}</version>
             <classifier>classes</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.mvel</groupId>
+            <artifactId>mvel2</artifactId>
+            <version>${mvel.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-api</artifactId>
         </dependency>
     </dependencies>
     
@@ -232,31 +242,12 @@
                              </artifactItems>
                         </configuration>
                     </execution>
-                    <execution>
-                        <id>unpack-undertow-server</id>
-                        <phase>generate-test-resources</phase>
-                        <goals>
-                            <goal>unpack</goal>
-                        </goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>org.keycloak.testsuite</groupId>
-                                    <artifactId>integration-arquillian-servers-auth-server-undertow</artifactId>
-                                    <version>${project.version}</version>
-                                    <type>jar</type>
-                                    <outputDirectory>${containers.home}/auth-server-undertow</outputDirectory>
-                                </artifactItem>
-                            </artifactItems>
-                            <includes>*.jks,*.crt,*.truststore,*.crl,*.key,certs/clients/*</includes>
-                        </configuration>
-                    </execution>
                 </executions>
             </plugin>
             <plugin>
                 <groupId>com.igormaznitsa</groupId>
                 <artifactId>mvn-golang-wrapper</artifactId>
-                <version>2.1.6</version>
+                <version>2.3.4</version>
                 <extensions>true</extensions>
                 <configuration>
                     <goVersion>1.9.2</goVersion>
@@ -359,26 +350,32 @@
                 </executions>
             </plugin>
 
-            <!-- DB will be released after the test -->
-            <plugin>
-                <groupId>org.keycloak</groupId>
-                <artifactId>db-allocator-plugin</artifactId>
-                <inherited>false</inherited>
-                <executions>
-                    <execution>
-                        <id>release-db</id>
-                        <goals>
-                            <goal>release</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-
         </plugins>
 
     </build>
 
     <profiles>
+        <profile>
+            <id>jpa</id>
+            <build>
+                <plugins>
+                    <!-- DB will be released after the test -->
+                    <plugin>
+                        <groupId>org.keycloak</groupId>
+                        <artifactId>db-allocator-plugin</artifactId>
+                        <inherited>false</inherited>
+                        <executions>
+                            <execution>
+                                <id>release-db</id>
+                                <goals>
+                                    <goal>release</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>product</id>
             <activation>
@@ -731,9 +728,9 @@
                         </goals>
                         <configuration>
                             <rules>
-                                <requireProperty>	
-                                    <message>When running fuse tests 'additional.fuse.repos' is expected to be set.</message>	
-                                    <property>additional.fuse.repos</property>	
+                                <requireProperty>
+                                    <message>When running fuse tests 'additional.fuse.repos' is expected to be set.</message>
+                                    <property>additional.fuse.repos</property>
                                 </requireProperty>
                             </rules>
                         </configuration>
@@ -806,9 +803,9 @@
                         </goals>
                         <configuration>
                             <rules>
-                                <requireProperty>	
-                                    <message>When running fuse tests 'additional.fuse.repos' is expected to be set.</message>	
-                                    <property>additional.fuse.repos</property>	
+                                <requireProperty>
+                                    <message>When running fuse tests 'additional.fuse.repos' is expected to be set.</message>
+                                    <property>additional.fuse.repos</property>
                                 </requireProperty>
                             </rules>
                         </configuration>

@@ -17,6 +17,9 @@
 package org.keycloak.testsuite.updaters;
 
 import org.keycloak.admin.client.Keycloak;
+import org.keycloak.admin.client.resource.AuthenticationManagementResource;
+import org.keycloak.admin.client.resource.ClientResource;
+import org.keycloak.admin.client.resource.ClientsResource;
 import org.keycloak.admin.client.resource.ComponentResource;
 import org.keycloak.admin.client.resource.ComponentsResource;
 import org.keycloak.admin.client.resource.GroupResource;
@@ -24,10 +27,16 @@ import org.keycloak.admin.client.resource.GroupsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
+import org.keycloak.representations.idm.AuthenticationExecutionInfoRepresentation;
+import org.keycloak.representations.idm.AuthenticationFlowRepresentation;
+import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.ComponentRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.ws.rs.core.Response;
 import org.jboss.logging.Logger;
@@ -57,6 +66,16 @@ public class Creator<T> implements AutoCloseable {
         }
     }
 
+    public static Creator<ClientResource> create(RealmResource realmResource, ClientRepresentation rep) {
+        final ClientsResource clients = realmResource.clients();
+        try (Response response = clients.create(rep)) {
+            String createdId = getCreatedId(response);
+            final ClientResource r = clients.get(createdId);
+            LOG.debugf("Created client ID %s", createdId);
+            return new Creator(createdId, r, r::remove);
+        }
+    }
+
     public static Creator<UserResource> create(RealmResource realmResource, UserRepresentation rep) {
         final UsersResource users = realmResource.users();
         try (Response response = users.create(rep)) {
@@ -74,6 +93,15 @@ public class Creator<T> implements AutoCloseable {
             final ComponentResource r = components.component(createdId);
             LOG.debugf("Created component ID %s", createdId);
             return new Creator(createdId, r, r::remove);
+        }
+    }
+
+    public static Creator.Flow create(RealmResource realmResource, AuthenticationFlowRepresentation rep) {
+        final AuthenticationManagementResource authMgmgRes = realmResource.flows();
+        try (Response response = authMgmgRes.createFlow(rep)) {
+            String createdId = getCreatedId(response);
+            LOG.debugf("Created flow ID %s", createdId);
+            return new Flow(createdId, rep.getAlias(), authMgmgRes, () -> authMgmgRes.deleteFlow(createdId));
         }
     }
 
@@ -110,4 +138,24 @@ public class Creator<T> implements AutoCloseable {
         }
     }
 
+    public static class Flow extends Creator<AuthenticationManagementResource> {
+
+        private final String alias;
+
+        public Flow(String id, String alias, AuthenticationManagementResource resource, Runnable closer) {
+            super(id, resource, closer);
+            this.alias = alias;
+        }
+
+        public AuthenticationExecutionInfoRepresentation addExecution(String providerId) {
+            Map<String, String> c = new HashMap<>();
+            c.put("provider", providerId);
+            resource().addExecution(alias, c);  // addExecution only handles "provider" in data
+            return resource().getExecutions(alias).stream()
+              .filter(aer -> Objects.equals(providerId, aer.getProviderId()))
+              .findFirst()
+              .orElse(null);
+        }
+
+    }
 }

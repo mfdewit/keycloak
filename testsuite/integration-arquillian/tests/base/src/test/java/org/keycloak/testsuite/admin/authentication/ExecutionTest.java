@@ -20,7 +20,11 @@ package org.keycloak.testsuite.admin.authentication;
 import org.junit.Assert;
 import org.junit.Test;
 import org.keycloak.authentication.AuthenticationFlow;
+import org.keycloak.authentication.authenticators.browser.UsernameFormFactory;
+import org.keycloak.authentication.authenticators.browser.WebAuthnAuthenticatorFactory;
+import org.keycloak.authentication.authenticators.challenge.NoCookieFlowRedirectAuthenticatorFactory;
 import org.keycloak.authentication.authenticators.client.ClientIdAndSecretAuthenticator;
+import org.keycloak.common.Profile;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.representations.idm.AuthenticationExecutionInfoRepresentation;
@@ -28,6 +32,7 @@ import org.keycloak.representations.idm.AuthenticationExecutionRepresentation;
 import org.keycloak.representations.idm.AuthenticationFlowRepresentation;
 import org.keycloak.representations.idm.AuthenticatorConfigRepresentation;
 import org.keycloak.testsuite.admin.ApiUtil;
+import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.util.AdminEventPaths;
 import org.keycloak.testsuite.util.AssertAdminEvents;
 
@@ -37,7 +42,10 @@ import javax.ws.rs.core.Response;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 import static org.hamcrest.Matchers.hasItems;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * @author <a href="mailto:mstrukel@redhat.com">Marko Strukelj</a>
@@ -149,7 +157,7 @@ public class ExecutionTest extends AbstractAuthenticationTest {
         // we'll need auth-cookie later
         AuthenticationExecutionInfoRepresentation authCookieExec = findExecutionByProvider("auth-cookie", executionReps);
 
-        compareExecution(newExecInfo("Review Profile", "idp-review-profile", true, 0, 4, DISABLED, null, new String[]{REQUIRED, DISABLED}), exec);
+        compareExecution(newExecInfo("Review Profile", "idp-review-profile", true, 0, 4, DISABLED, null, new String[]{REQUIRED, ALTERNATIVE,DISABLED}), exec);
 
         // remove execution
         authMgmtResource.removeExecution(exec.getId());
@@ -169,7 +177,7 @@ public class ExecutionTest extends AbstractAuthenticationTest {
         AuthenticationExecutionRepresentation rep = new AuthenticationExecutionRepresentation();
         rep.setPriority(10);
         rep.setAuthenticator("auth-cookie");
-        rep.setRequirement(OPTIONAL);
+        rep.setRequirement(CONDITIONAL);
 
         // Should fail - missing parent flow
         response = authMgmtResource.addExecution(rep);
@@ -219,7 +227,7 @@ public class ExecutionTest extends AbstractAuthenticationTest {
 
         // Note: there is no checking in addExecution if requirement is one of requirementChoices
         // Thus we can have OPTIONAL which is neither ALTERNATIVE, nor DISABLED
-        compareExecution(newExecInfo("Cookie", "auth-cookie", false, 0, 3, OPTIONAL, null, new String[]{ALTERNATIVE, DISABLED}), exec);
+        compareExecution(newExecInfo("Cookie", "auth-cookie", false, 0, 3, CONDITIONAL, null, new String[]{REQUIRED, ALTERNATIVE, DISABLED}), exec);
     }
 
     @Test
@@ -311,5 +319,43 @@ public class ExecutionTest extends AbstractAuthenticationTest {
         AuthenticationFlowRepresentation rep = findFlowByAlias("new-client-flow", authMgmtResource.getFlows());
         authMgmtResource.deleteFlow(rep.getId());
         assertAdminEvents.assertEvent(REALM_NAME, OperationType.DELETE, AdminEventPaths.authFlowPath(rep.getId()), ResourceType.AUTH_FLOW);
+    }
+
+    @Test
+    @EnableFeature(value = Profile.Feature.WEB_AUTHN, skipRestart = true, onlyForProduct = true)
+    @AuthServerContainerExclude(AuthServer.REMOTE)
+    public void testRequirementsInExecution() {
+        HashMap<String, String> params = new HashMap<>();
+        String newBrowserFlow = "new-exec-flow";
+
+        params.put("newName", newBrowserFlow);
+        try (Response response = authMgmtResource.copy("browser", params)) {
+            assertAdminEvents.assertEvent(REALM_NAME, OperationType.CREATE, AdminEventPaths.authCopyFlowPath("browser"), params, ResourceType.AUTH_FLOW);
+            Assert.assertEquals("Copy flow", 201, response.getStatus());
+        }
+
+        addExecutionCheckReq(newBrowserFlow, UsernameFormFactory.PROVIDER_ID, params, REQUIRED);
+        addExecutionCheckReq(newBrowserFlow, WebAuthnAuthenticatorFactory.PROVIDER_ID, params, DISABLED);
+        addExecutionCheckReq(newBrowserFlow, NoCookieFlowRedirectAuthenticatorFactory.PROVIDER_ID, params, REQUIRED);
+
+        AuthenticationFlowRepresentation rep = findFlowByAlias(newBrowserFlow, authMgmtResource.getFlows());
+        Assert.assertNotNull(rep);
+        authMgmtResource.deleteFlow(rep.getId());
+        assertAdminEvents.assertEvent(REALM_NAME, OperationType.DELETE, AdminEventPaths.authFlowPath(rep.getId()), ResourceType.AUTH_FLOW);
+    }
+
+    private void addExecutionCheckReq(String flow, String providerID, HashMap<String, String> params, String expectedRequirement) {
+        params.put("provider", providerID);
+        authMgmtResource.addExecution(flow, params);
+        assertAdminEvents.assertEvent(REALM_NAME, OperationType.CREATE, AdminEventPaths.authAddExecutionPath(flow), params, ResourceType.AUTH_EXECUTION);
+
+        List<AuthenticationExecutionInfoRepresentation> executionReps = authMgmtResource.getExecutions(flow);
+        AuthenticationExecutionInfoRepresentation exec = findExecutionByProvider(providerID, executionReps);
+
+        Assert.assertNotNull(exec);
+        Assert.assertEquals(expectedRequirement, exec.getRequirement());
+
+        authMgmtResource.removeExecution(exec.getId());
+        assertAdminEvents.assertEvent(REALM_NAME, OperationType.DELETE, AdminEventPaths.authExecutionPath(exec.getId()), ResourceType.AUTH_EXECUTION);
     }
 }

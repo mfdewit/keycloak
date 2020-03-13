@@ -25,10 +25,11 @@ import org.keycloak.admin.client.resource.ClientResource;
 import org.keycloak.admin.client.resource.ClientScopeResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
-import org.keycloak.authentication.AuthenticationFlow;
 import org.keycloak.common.constants.KerberosConstants;
 import org.keycloak.models.Constants;
 import org.keycloak.models.LDAPConstants;
+import org.keycloak.models.credential.PasswordCredentialModel;
+import org.keycloak.models.credential.dto.PasswordCredentialData;
 import org.keycloak.models.utils.DefaultAuthenticationFlows;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolFactory;
@@ -40,6 +41,7 @@ import org.keycloak.representations.idm.ClientMappingsRepresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.ComponentRepresentation;
+import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.FederatedIdentityRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
 import org.keycloak.representations.idm.ProtocolMapperRepresentation;
@@ -59,6 +61,7 @@ import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.client.KeycloakTestingClient;
 import org.keycloak.testsuite.util.RealmRepUtil;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -73,6 +76,8 @@ import java.util.stream.Collectors;
 
 import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
+import org.keycloak.util.JsonSerialization;
+
 import static org.junit.Assert.assertThat;
 
 /**
@@ -83,7 +88,7 @@ public class ExportImportUtil {
 
     // In the old testsuite, this method exists as a public method of ImportTest from the model package.
     // However, model package is not ready to be migrated yet.
-    public static void assertDataImportedInRealm(Keycloak adminClient, KeycloakTestingClient testingClient, RealmRepresentation realm) {
+    public static void assertDataImportedInRealm(Keycloak adminClient, KeycloakTestingClient testingClient, RealmRepresentation realm) throws IOException {
         Assert.assertTrue(realm.isVerifyEmail());
         Assert.assertEquals((Integer)3600000, realm.getOfflineSessionIdleTimeout());
         Assert.assertEquals((Integer)1500, realm.getAccessTokenLifespanForImplicitFlow());
@@ -111,7 +116,7 @@ public class ExportImportUtil {
         Assert.assertEquals(0, userRsc.getFederatedIdentity().size());
 
         List<ClientRepresentation> resources = realmRsc.clients().findAll();
-        Assert.assertEquals(9, resources.size());
+        Assert.assertEquals(10, resources.size());
 
         // Test applications imported
         ClientRepresentation application = ApiUtil.findClientByClientId(realmRsc, "Application").toRepresentation();
@@ -122,7 +127,7 @@ public class ExportImportUtil {
         Assert.assertNotNull(otherApp);
         Assert.assertNull(nonExisting);
         List<ClientRepresentation> clients = realmRsc.clients().findAll();
-        Assert.assertEquals(9, clients.size());
+        Assert.assertEquals(10, clients.size());
         Assert.assertTrue(hasClient(clients, application));
         Assert.assertTrue(hasClient(clients, otherApp));
         Assert.assertTrue(hasClient(clients, accountApp));
@@ -179,6 +184,13 @@ public class ExportImportUtil {
         UserRepresentation loginclient = findByUsername(realmRsc, "loginclient");
         // user with creation timestamp as string in import
         Assert.assertEquals(new Long(123655), loginclient.getCreatedTimestamp());
+
+        UserRepresentation hashedPasswordUser = findByUsername(realmRsc, "hashedpassworduser");
+        CredentialRepresentation password = realmRsc.users().get(hashedPasswordUser.getId()).credentials().stream()
+                .filter(credential -> PasswordCredentialModel.TYPE.equals(credential.getType()))
+                .findFirst().get();
+        PasswordCredentialData credentialData = JsonSerialization.readValue(password.getCredentialData(), PasswordCredentialData.class);
+        Assert.assertEquals(1234, credentialData.getHashIterations());
 
         List<RoleRepresentation> realmRoles = realmRolesForUser(realmRsc, admin);
         Assert.assertEquals(1, realmRoles.size());

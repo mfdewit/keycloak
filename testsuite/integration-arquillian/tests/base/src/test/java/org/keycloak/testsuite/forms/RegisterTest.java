@@ -22,18 +22,20 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventType;
-import org.keycloak.models.UserModel;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
 import org.keycloak.testsuite.pages.*;
 import org.keycloak.testsuite.pages.AppPage.RequestType;
 
 import org.keycloak.testsuite.util.*;
 import javax.mail.internet.MimeMessage;
+
 import static org.jgroups.util.Util.assertTrue;
 import static org.junit.Assert.assertEquals;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -323,6 +325,7 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE) // GreenMailRule is not working atm
     public void registerUserSuccessWithEmailVerification() throws Exception {
         RealmRepresentation realm = testRealm().toRepresentation();
         boolean origVerifyEmail = realm.isVerifyEmail();
@@ -373,6 +376,7 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE) // GreenMailRule is not working atm
     public void registerUserSuccessWithEmailVerificationWithResend() throws Exception {
         RealmRepresentation realm = testRealm().toRepresentation();
         boolean origVerifyEmail = realm.isVerifyEmail();
@@ -493,7 +497,7 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
 
     @Test
     public void registerExistingUser_emailAsUsername() {
-        configureRelamRegistrationEmailAsUsername(true);
+        configureRealmRegistrationEmailAsUsername(true);
 
         try {
             loginPage.open();
@@ -507,13 +511,13 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
 
             events.expectRegister("test-user@localhost", "test-user@localhost").user((String) null).error("email_in_use").assertEvent();
         } finally {
-            configureRelamRegistrationEmailAsUsername(false);
+            configureRealmRegistrationEmailAsUsername(false);
         }
     }
 
     @Test
     public void registerUserMissingOrInvalidEmail_emailAsUsername() {
-        configureRelamRegistrationEmailAsUsername(true);
+        configureRealmRegistrationEmailAsUsername(true);
 
         try {
             loginPage.open();
@@ -530,13 +534,13 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
             assertEquals("Invalid email address.", registerPage.getError());
             events.expectRegister("registerUserInvalidEmailemail", "registerUserInvalidEmailemail").error("invalid_registration").assertEvent();
         } finally {
-            configureRelamRegistrationEmailAsUsername(false);
+            configureRealmRegistrationEmailAsUsername(false);
         }
     }
 
     @Test
     public void registerUserSuccess_emailAsUsername() {
-        configureRelamRegistrationEmailAsUsername(true);
+        configureRealmRegistrationEmailAsUsername(true);
 
         try {
             loginPage.open();
@@ -557,16 +561,16 @@ public class RegisterTest extends AbstractTestRealmKeycloakTest {
             Assert.assertTrue((System.currentTimeMillis() - user.getCreatedTimestamp()) < 10000);
 
         } finally {
-            configureRelamRegistrationEmailAsUsername(false);
+            configureRealmRegistrationEmailAsUsername(false);
         }
     }
 
-    protected void configureRelamRegistrationEmailAsUsername(final boolean value) {
+    protected void configureRealmRegistrationEmailAsUsername(final boolean value) {
         RealmRepresentation realm = testRealm().toRepresentation();
         realm.setRegistrationEmailAsUsername(value);
         testRealm().update(realm);
     }
-    
+
     private void setDuplicateEmailsAllowed(boolean allowed) {
         RealmRepresentation testRealm = testRealm().toRepresentation();
         testRealm.setDuplicateEmailsAllowed(allowed);

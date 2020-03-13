@@ -233,7 +233,7 @@ public class TokenEndpoint {
         client = clientAuth.getClient();
         clientAuthAttributes = clientAuth.getClientAuthAttributes();
 
-        cors.allowedOrigins(session.getContext().getUri(), client);
+        cors.allowedOrigins(session, client);
 
         if (client.isBearerOnly()) {
             throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_CLIENT, "Bearer-only not allowed", Response.Status.BAD_REQUEST);
@@ -266,7 +266,8 @@ public class TokenEndpoint {
             event.event(EventType.PERMISSION_TOKEN);
             action = Action.PERMISSION;
         } else {
-            throw new CorsErrorResponseException(cors, Errors.INVALID_REQUEST, "Invalid " + OIDCLoginProtocol.GRANT_TYPE_PARAM, Response.Status.BAD_REQUEST);
+            throw new CorsErrorResponseException(cors, OAuthErrorException.UNSUPPORTED_GRANT_TYPE,
+                "Unsupported " + OIDCLoginProtocol.GRANT_TYPE_PARAM, Response.Status.BAD_REQUEST);
         }
 
         event.detail(Details.GRANT_TYPE, grantType);
@@ -300,7 +301,10 @@ public class TokenEndpoint {
             throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_GRANT, "Code is expired", Response.Status.BAD_REQUEST);
         }
 
-        UserSessionModel userSession = clientSession.getUserSession();
+        UserSessionModel userSession = null;
+        if (clientSession != null) {
+            userSession = clientSession.getUserSession();
+        }
 
         if (userSession == null) {
             event.error(Errors.USER_SESSION_NOT_FOUND);
@@ -384,7 +388,7 @@ public class TokenEndpoint {
             throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_SCOPE, "Client no longer has requested consent from user", Response.Status.BAD_REQUEST);
         }
 
-        ClientSessionContext clientSessionCtx = DefaultClientSessionContext.fromClientSessionAndClientScopes(clientSession, clientScopes);
+        ClientSessionContext clientSessionCtx = DefaultClientSessionContext.fromClientSessionAndClientScopes(clientSession, clientScopes, session);
 
         // Set nonce as an attribute in the ClientSessionContext. Will be used for the token generation
         clientSessionCtx.setAttribute(OIDCLoginProtocol.NONCE_PARAM, codeData.getNonce());
@@ -533,13 +537,11 @@ public class TokenEndpoint {
             String adapterSessionHost = formParams.getFirst(AdapterConstants.CLIENT_SESSION_HOST);
             logger.debugf("Adapter Session '%s' saved in ClientSession for client '%s'. Host is '%s'", adapterSessionId, client.getClientId(), adapterSessionHost);
 
-            event.detail(AdapterConstants.CLIENT_SESSION_STATE, adapterSessionId);
             String oldClientSessionState = clientSession.getNote(AdapterConstants.CLIENT_SESSION_STATE);
             if (!adapterSessionId.equals(oldClientSessionState)) {
                 clientSession.setNote(AdapterConstants.CLIENT_SESSION_STATE, adapterSessionId);
             }
 
-            event.detail(AdapterConstants.CLIENT_SESSION_HOST, adapterSessionHost);
             String oldClientSessionHost = clientSession.getNote(AdapterConstants.CLIENT_SESSION_HOST);
             if (!Objects.equals(adapterSessionHost, oldClientSessionHost)) {
                 clientSession.setNote(AdapterConstants.CLIENT_SESSION_HOST, adapterSessionHost);
@@ -558,7 +560,7 @@ public class TokenEndpoint {
 
         if (!client.isDirectAccessGrantsEnabled()) {
             event.error(Errors.NOT_ALLOWED);
-            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_GRANT, "Client not allowed for direct access grants", Response.Status.BAD_REQUEST);
+            throw new CorsErrorResponseException(cors, OAuthErrorException.UNAUTHORIZED_CLIENT, "Client not allowed for direct access grants", Response.Status.BAD_REQUEST);
         }
 
         if (client.isConsentRequired()) {
@@ -1093,7 +1095,7 @@ public class TokenEndpoint {
 
             session.getContext().setClient(client);
 
-            cors.allowedOrigins(session.getContext().getUri(), client);
+            cors.allowedOrigins(session, client);
         }
 
         String claimToken = null;
@@ -1202,7 +1204,7 @@ public class TokenEndpoint {
             return false;
         }
         Matcher m = VALID_CODE_VERIFIER_PATTERN.matcher(codeVerifier);
-        return m.matches() ? true : false;
+        return m.matches();
     }
 
     // https://tools.ietf.org/html/rfc7636#section-4.6

@@ -11,14 +11,13 @@ import java.util.Map;
 
 import static java.util.Locale.ENGLISH;
 import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.CoreMatchers.not;
 import static org.keycloak.OAuth2Constants.UI_LOCALES_PARAM;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.IDP_OIDC_ALIAS;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.IDP_OIDC_PROVIDER_ID;
 import static org.keycloak.testsuite.broker.BrokerTestTools.createIdentityProvider;
 import static org.keycloak.testsuite.broker.BrokerTestTools.waitForPage;
 
-public class KcOidcBrokerUiLocalesEnabledTest extends KcOidcBrokerTest {
+public class KcOidcBrokerUiLocalesEnabledTest extends AbstractBrokerTest {
 
     @Override
     protected BrokerConfiguration getBrokerConfiguration() {
@@ -45,7 +44,7 @@ public class KcOidcBrokerUiLocalesEnabledTest extends KcOidcBrokerTest {
 
 
         log.debug("Clicking social " + bc.getIDPAlias());
-        accountLoginPage.clickSocial(bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
 
         waitForPage(driver, "log in to", true);
 
@@ -55,7 +54,7 @@ public class KcOidcBrokerUiLocalesEnabledTest extends KcOidcBrokerTest {
         Assert.assertThat(UI_LOCALES_PARAM + "=" + ENGLISH.toLanguageTag() + " should be part of the url",
                 driver.getCurrentUrl(), containsString(UI_LOCALES_PARAM + "=" + ENGLISH.toLanguageTag()));
 
-        accountLoginPage.login(bc.getUserLogin(), bc.getUserPassword());
+        loginPage.login(bc.getUserLogin(), bc.getUserPassword());
         waitForPage(driver, "update account information", false);
 
         updateAccountInformationPage.assertCurrent();

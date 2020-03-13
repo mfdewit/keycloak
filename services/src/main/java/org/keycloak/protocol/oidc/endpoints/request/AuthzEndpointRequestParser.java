@@ -20,6 +20,7 @@ package org.keycloak.protocol.oidc.endpoints.request;
 import org.jboss.logging.Logger;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.constants.AdapterConstants;
+import org.keycloak.models.Constants;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 
 import java.util.HashSet;
@@ -57,6 +58,7 @@ abstract class AuthzEndpointRequestParser {
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.LOGIN_HINT_PARAM);
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.PROMPT_PARAM);
         KNOWN_REQ_PARAMS.add(AdapterConstants.KC_IDP_HINT);
+        KNOWN_REQ_PARAMS.add(Constants.KC_ACTION);
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.NONCE_PARAM);
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.MAX_AGE_PARAM);
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.UI_LOCALES_PARAM);
@@ -68,9 +70,7 @@ abstract class AuthzEndpointRequestParser {
         // https://tools.ietf.org/html/rfc7636#section-6.1
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.CODE_CHALLENGE_PARAM);
         KNOWN_REQ_PARAMS.add(OIDCLoginProtocol.CODE_CHALLENGE_METHOD_PARAM);
-
     }
-
 
     public void parseRequest(AuthorizationEndpointRequest request) {
         String clientId = getParameter(OIDCLoginProtocol.CLIENT_ID_PARAM);
@@ -88,11 +88,13 @@ abstract class AuthzEndpointRequestParser {
         request.loginHint = replaceIfNotNull(request.loginHint, getParameter(OIDCLoginProtocol.LOGIN_HINT_PARAM));
         request.prompt = replaceIfNotNull(request.prompt, getParameter(OIDCLoginProtocol.PROMPT_PARAM));
         request.idpHint = replaceIfNotNull(request.idpHint, getParameter(AdapterConstants.KC_IDP_HINT));
+        request.action = replaceIfNotNull(request.action, getParameter(Constants.KC_ACTION));
         request.nonce = replaceIfNotNull(request.nonce, getParameter(OIDCLoginProtocol.NONCE_PARAM));
         request.maxAge = replaceIfNotNull(request.maxAge, getIntParameter(OIDCLoginProtocol.MAX_AGE_PARAM));
         request.claims = replaceIfNotNull(request.claims, getParameter(OIDCLoginProtocol.CLAIMS_PARAM));
         request.acr = replaceIfNotNull(request.acr, getParameter(OIDCLoginProtocol.ACR_PARAM));
         request.display = replaceIfNotNull(request.display, getParameter(OAuth2Constants.DISPLAY));
+        request.uiLocales = replaceIfNotNull(request.uiLocales, getParameter(OAuth2Constants.UI_LOCALES_PARAM));
 
         // https://tools.ietf.org/html/rfc7636#section-6.1
         request.codeChallenge = replaceIfNotNull(request.codeChallenge, getParameter(OIDCLoginProtocol.CODE_CHALLENGE_PARAM));
@@ -100,7 +102,6 @@ abstract class AuthzEndpointRequestParser {
 
         extractAdditionalReqParams(request.additionalReqParams);
     }
-
 
     protected void extractAdditionalReqParams(Map<String, String> additionalReqParams) {
         for (String paramName : keySet()) {
@@ -126,7 +127,6 @@ abstract class AuthzEndpointRequestParser {
     protected <T> T replaceIfNotNull(T previousVal, T newVal) {
         return newVal==null ? previousVal : newVal;
     }
-
 
     protected abstract String getParameter(String paramName);
 

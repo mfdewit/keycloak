@@ -16,25 +16,39 @@
 
 package org.keycloak.authentication.requiredactions;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 
 import org.jboss.logging.Logger;
 import org.keycloak.WebAuthnConstants;
+import org.keycloak.authentication.CredentialRegistrator;
+import org.keycloak.authentication.InitiatedActionSupport;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.common.util.UriUtils;
-import org.keycloak.credential.WebAuthnCredentialModel;
+import org.keycloak.credential.CredentialModel;
+import org.keycloak.credential.CredentialProvider;
+import org.keycloak.credential.WebAuthnCredentialModelInput;
+import org.keycloak.credential.WebAuthnCredentialProvider;
+import org.keycloak.credential.WebAuthnCredentialProviderFactory;
 import org.keycloak.crypto.Algorithm;
+import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
+import org.keycloak.forms.login.LoginFormsProvider;
+import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.WebAuthnPolicy;
 
+import com.webauthn4j.converter.util.CborConverter;
+import com.webauthn4j.converter.util.JsonConverter;
 import com.webauthn4j.data.WebAuthnRegistrationContext;
 import com.webauthn4j.data.attestation.authenticator.AttestedCredentialData;
 import com.webauthn4j.data.attestation.statement.AttestationStatement;
@@ -46,20 +60,47 @@ import com.webauthn4j.server.ServerProperty;
 import com.webauthn4j.util.exception.WebAuthnException;
 import com.webauthn4j.validator.WebAuthnRegistrationContextValidationResponse;
 import com.webauthn4j.validator.WebAuthnRegistrationContextValidator;
+import com.webauthn4j.validator.attestation.statement.androidkey.AndroidKeyAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.statement.androidsafetynet.AndroidSafetyNetAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.statement.none.NoneAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.statement.packed.PackedAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.statement.tpm.TPMAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.statement.u2f.FIDOU2FAttestationStatementValidator;
+import com.webauthn4j.validator.attestation.trustworthiness.certpath.CertPathTrustworthinessValidator;
+import com.webauthn4j.validator.attestation.trustworthiness.ecdaa.DefaultECDAATrustworthinessValidator;
+import com.webauthn4j.validator.attestation.trustworthiness.self.DefaultSelfAttestationTrustworthinessValidator;
+import org.keycloak.models.credential.WebAuthnCredentialModel;
 
-public class WebAuthnRegister implements RequiredActionProvider {
+import static org.keycloak.services.messages.Messages.*;
 
+/**
+ * Required action for register WebAuthn 2-factor credential for the user
+ */
+public class WebAuthnRegister implements RequiredActionProvider, CredentialRegistrator {
+
+    private static final String WEB_AUTHN_TITLE_ATTR = "webAuthnTitle";
     private static final Logger logger = Logger.getLogger(WebAuthnRegister.class);
-    private KeycloakSession session;
 
-    public WebAuthnRegister(KeycloakSession session) {
+    private KeycloakSession session;
+    private CertPathTrustworthinessValidator certPathtrustValidator;
+
+    public WebAuthnRegister(KeycloakSession session, CertPathTrustworthinessValidator certPathtrustValidator) {
         this.session = session;
+        this.certPathtrustValidator = certPathtrustValidator;
+    }
+
+    @Override
+    public InitiatedActionSupport initiatedActionSupport() {
+        return InitiatedActionSupport.SUPPORTED;
     }
 
     @Override
     public void requiredActionChallenge(RequiredActionContext context) {
         UserModel userModel = context.getUser();
-        String userid = userModel.getId();
+        // Use standard UTF-8 charset to get bytes from string.
+        // Otherwise the platform's default charset is used and it might cause problems later when
+        // decoded on different system.
+        String userId = Base64Url.encode(userModel.getId().getBytes(StandardCharsets.UTF_8));
         String username = userModel.getUsername();
         Challenge challenge = new DefaultChallenge();
         String challengeValue = Base64Url.encode(challenge.getValue());
@@ -68,7 +109,7 @@ public class WebAuthnRegister implements RequiredActionProvider {
         // construct parameters for calling WebAuthn API navigator.credential.create()
 
         // mandatory
-        WebAuthnPolicy policy = context.getRealm().getWebAuthnPolicy();
+        WebAuthnPolicy policy = getWebAuthnPolicy(context);
         List<String> signatureAlgorithmsList = policy.getSignatureAlgorithm();
         String signatureAlgorithms = stringifySignatureAlgorithms(signatureAlgorithmsList);
         String rpEntityName = policy.getRpEntityName();
@@ -82,11 +123,25 @@ public class WebAuthnRegister implements RequiredActionProvider {
         String userVerificationRequirement = policy.getUserVerificationRequirement();
         long createTimeout = policy.getCreateTimeout();
         boolean avoidSameAuthenticatorRegister = policy.isAvoidSameAuthenticatorRegister();
-        String excludeCredentialIds = avoidSameAuthenticatorRegister == true ? stringifyExcludeCredentialIds(userModel.getAttribute(WebAuthnConstants.PUBKEY_CRED_ID_ATTR)) : "";
+
+        String excludeCredentialIds = "";
+        if (avoidSameAuthenticatorRegister) {
+            List<CredentialModel> webAuthnCredentials = session.userCredentialManager().getStoredCredentialsByType(context.getRealm(), userModel, getCredentialType());
+            List<String> webAuthnCredentialPubKeyIds = webAuthnCredentials.stream().map(credentialModel -> {
+
+                WebAuthnCredentialModel credModel = WebAuthnCredentialModel.createFromCredentialModel(credentialModel);
+                return Base64Url.encodeBase64ToBase64Url(credModel.getWebAuthnCredentialData().getCredentialId());
+
+            }).collect(Collectors.toList());
+
+            excludeCredentialIds = stringifyExcludeCredentialIds(webAuthnCredentialPubKeyIds);
+        }
+
+        String isSetRetry = context.getHttpRequest().getDecodedFormParameters().getFirst(WebAuthnConstants.IS_SET_RETRY);
 
         Response form = context.form()
                 .setAttribute(WebAuthnConstants.CHALLENGE, challengeValue)
-                .setAttribute(WebAuthnConstants.USER_ID, userid)
+                .setAttribute(WebAuthnConstants.USER_ID, userId)
                 .setAttribute(WebAuthnConstants.USER_NAME, username)
                 .setAttribute(WebAuthnConstants.RP_ENTITY_NAME, rpEntityName)
                 .setAttribute(WebAuthnConstants.SIGNATURE_ALGORITHMS, signatureAlgorithms)
@@ -96,9 +151,22 @@ public class WebAuthnRegister implements RequiredActionProvider {
                 .setAttribute(WebAuthnConstants.REQUIRE_RESIDENT_KEY, requireResidentKey)
                 .setAttribute(WebAuthnConstants.USER_VERIFICATION_REQUIREMENT, userVerificationRequirement)
                 .setAttribute(WebAuthnConstants.CREATE_TIMEOUT, createTimeout)
-                .setAttribute(WebAuthnConstants.EXCLUDE_CREDENTIAL_IDS, excludeCredentialIds.toString())
+                .setAttribute(WebAuthnConstants.EXCLUDE_CREDENTIAL_IDS, excludeCredentialIds)
+                .setAttribute(WebAuthnConstants.IS_SET_RETRY, isSetRetry)
                 .createForm("webauthn-register.ftl");
         context.challenge(form);
+    }
+
+    protected WebAuthnPolicy getWebAuthnPolicy(RequiredActionContext context) {
+        return context.getRealm().getWebAuthnPolicy();
+    }
+
+    protected String getCredentialType() {
+        return WebAuthnCredentialModel.TYPE_TWOFACTOR;
+    }
+
+    protected String getCredentialProviderId() {
+        return WebAuthnCredentialProviderFactory.PROVIDER_ID;
     }
 
     @Override
@@ -106,66 +174,91 @@ public class WebAuthnRegister implements RequiredActionProvider {
 
         MultivaluedMap<String, String> params = context.getHttpRequest().getDecodedFormParameters();
 
-        // receive error from navigator.credentials.create()
-        String errorMsgFromWebAuthnApi = params.getFirst(WebAuthnConstants.ERROR);
-        if (errorMsgFromWebAuthnApi != null && !errorMsgFromWebAuthnApi.isEmpty()) {
-            setErrorResponse(context, ERR_WEBAUTHN_API_CREATE, errorMsgFromWebAuthnApi);
+        String isSetRetry = params.getFirst(WebAuthnConstants.IS_SET_RETRY);
+        if (isSetRetry != null && !isSetRetry.isEmpty()) {
+            requiredActionChallenge(context);
             return;
         }
 
-        WebAuthnPolicy policy = context.getRealm().getWebAuthnPolicy();
+        context.getEvent().detail(Details.CREDENTIAL_TYPE, getCredentialType());
+
+        // receive error from navigator.credentials.create()
+        String errorMsgFromWebAuthnApi = params.getFirst(WebAuthnConstants.ERROR);
+        if (errorMsgFromWebAuthnApi != null && !errorMsgFromWebAuthnApi.isEmpty()) {
+            setErrorResponse(context, WEBAUTHN_ERROR_REGISTER_VERIFICATION, errorMsgFromWebAuthnApi);
+            return;
+        }
+
+        WebAuthnPolicy policy = getWebAuthnPolicy(context);
         String rpId = policy.getRpId();
         if (rpId == null || rpId.isEmpty()) rpId =  context.getUriInfo().getBaseUri().getHost();
         String label = params.getFirst(WebAuthnConstants.AUTHENTICATOR_LABEL);
         byte[] clientDataJSON = Base64.getUrlDecoder().decode(params.getFirst(WebAuthnConstants.CLIENT_DATA_JSON));
         byte[] attestationObject = Base64.getUrlDecoder().decode(params.getFirst(WebAuthnConstants.ATTESTATION_OBJECT));
+
         String publicKeyCredentialId = params.getFirst(WebAuthnConstants.PUBLIC_KEY_CREDENTIAL_ID);
 
         Origin origin = new Origin(UriUtils.getOrigin(context.getUriInfo().getBaseUri()));
         Challenge challenge = new DefaultChallenge(context.getAuthenticationSession().getAuthNote(WebAuthnConstants.AUTH_CHALLENGE_NOTE));
         ServerProperty serverProperty = new ServerProperty(origin, rpId, challenge, null);
         // check User Verification by considering a malicious user might modify the result of calling WebAuthn API
-        boolean isUserVerificationRequired = policy.getUserVerificationRequirement().equals(WebAuthnConstants.OPTION_REQUIRED) == true ? true : false;
+        boolean isUserVerificationRequired = policy.getUserVerificationRequirement().equals(WebAuthnConstants.OPTION_REQUIRED);
 
         try {
             WebAuthnRegistrationContext registrationContext = new WebAuthnRegistrationContext(clientDataJSON, attestationObject, serverProperty, isUserVerificationRequired);
-            // NOTE: not yet verify Attestation Statement based on certificates
-            WebAuthnRegistrationContextValidator webAuthnRegistrationContextValidator = WebAuthnRegistrationContextValidator.createNonStrictRegistrationContextValidator();
+            WebAuthnRegistrationContextValidator webAuthnRegistrationContextValidator = createWebAuthnRegistrationContextValidator();
             WebAuthnRegistrationContextValidationResponse response = webAuthnRegistrationContextValidator.validate(registrationContext);
 
             showInfoAfterWebAuthnApiCreate(response);
 
             checkAcceptedAuthenticator(response, policy);
 
-            WebAuthnCredentialModel credential = new WebAuthnCredentialModel();
+            WebAuthnCredentialModelInput credential = new WebAuthnCredentialModelInput(getCredentialType());
 
             credential.setAttestedCredentialData(response.getAttestationObject().getAuthenticatorData().getAttestedCredentialData());
-            credential.setAttestationStatement(response.getAttestationObject().getAttestationStatement());
             credential.setCount(response.getAttestationObject().getAuthenticatorData().getSignCount());
 
-            this.session.userCredentialManager().updateCredential(context.getRealm(), context.getUser(), credential);
+            // Save new webAuthn credential
+            WebAuthnCredentialProvider webAuthnCredProvider = (WebAuthnCredentialProvider) this.session.getProvider(CredentialProvider.class, getCredentialProviderId());
+            WebAuthnCredentialModel newCredentialModel = webAuthnCredProvider.getCredentialModelFromCredentialInput(credential, label);
 
-            // store received Credential ID on Registration onto UserModel in order to be used on Authentication
-            String aaguid = response.getAttestationObject().getAuthenticatorData().getAttestedCredentialData().getAaguid().toString();
-            context.getUser().setSingleAttribute(WebAuthnConstants.PUBKEY_CRED_ID_ATTR, publicKeyCredentialId);
-            context.getUser().setSingleAttribute(WebAuthnConstants.PUBKEY_CRED_LABEL_ATTR, label);
-            context.getUser().setSingleAttribute(WebAuthnConstants.PUBKEY_CRED_AAGUID_ATTR, aaguid);
-            logger.infov("WebAuthn Registration successed. publicKeyCredentialId = {0}, publicKeyCredentialLabel = {1}, publicKeyCredentialAAGUID = {2}",publicKeyCredentialId, label, aaguid);
+            webAuthnCredProvider.createCredential(context.getRealm(), context.getUser(), newCredentialModel);
+
+            String aaguid = newCredentialModel.getWebAuthnCredentialData().getAaguid();
+            logger.debugv("WebAuthn credential registration success for user {0}. credentialType = {1}, publicKeyCredentialId = {2}, publicKeyCredentialLabel = {3}, publicKeyCredentialAAGUID = {4}",
+                    context.getUser().getUsername(), getCredentialType(), publicKeyCredentialId, label, aaguid);
+            webAuthnCredProvider.dumpCredentialModel(newCredentialModel, credential);
 
             context.getEvent()
-                .detail("public_key_credential_id", publicKeyCredentialId)
-                .detail("public_key_credential_label", label)
-                .detail("public_key_credential_aaguid", aaguid);
+                .detail(WebAuthnConstants.PUBKEY_CRED_ID_ATTR, publicKeyCredentialId)
+                .detail(WebAuthnConstants.PUBKEY_CRED_LABEL_ATTR, label)
+                .detail(WebAuthnConstants.PUBKEY_CRED_AAGUID_ATTR, aaguid);
             context.success();
         } catch (WebAuthnException wae) {
             if (logger.isDebugEnabled()) logger.debug(wae.getMessage(), wae);
-            setErrorResponse(context, ERR_WEBAUTHN_API_CREATE, wae.getMessage());
+            setErrorResponse(context, WEBAUTHN_ERROR_REGISTRATION, wae.getMessage());
             return;
         } catch (Exception e) {
             if (logger.isDebugEnabled()) logger.debug(e.getMessage(), e);
-            setErrorResponse(context, ERR_WEBAUTHN_API_CREATE, e.getMessage());
+            setErrorResponse(context, WEBAUTHN_ERROR_REGISTRATION, e.getMessage());
             return;
         }
+    }
+
+    private WebAuthnRegistrationContextValidator createWebAuthnRegistrationContextValidator() {
+        return new WebAuthnRegistrationContextValidator(
+                Arrays.asList(
+                        new NoneAttestationStatementValidator(),
+                        new PackedAttestationStatementValidator(),
+                        new TPMAttestationStatementValidator(),
+                        new AndroidKeyAttestationStatementValidator(),
+                        new AndroidSafetyNetAttestationStatementValidator(),
+                        new FIDOU2FAttestationStatementValidator()
+                ), this.certPathtrustValidator,
+                new DefaultECDAATrustworthinessValidator(),
+                new DefaultSelfAttestationTrustworthinessValidator(),
+                new JsonConverter(),
+                new CborConverter());
     }
 
     private String stringifySignatureAlgorithms(List<String> signatureAlgorithmsList) {
@@ -214,7 +307,7 @@ public class WebAuthnRegister implements RequiredActionProvider {
     private void showInfoAfterWebAuthnApiCreate(WebAuthnRegistrationContextValidationResponse response) {
         AttestedCredentialData attestedCredentialData = response.getAttestationObject().getAuthenticatorData().getAttestedCredentialData();
         AttestationStatement attestationStatement = response.getAttestationObject().getAttestationStatement();
-        logger.debugv("createad key's algorithm = {0}", attestedCredentialData.getCredentialPublicKey().getAlgorithm());
+        logger.debugv("createad key's algorithm = {0}", String.valueOf(attestedCredentialData.getCOSEKey().getAlgorithm().getValue()));
         logger.debugv("aaguid = {0}", attestedCredentialData.getAaguid().toString());
         logger.debugv("attestation format = {0}", attestationStatement.getFormat());
     }
@@ -251,25 +344,11 @@ public class WebAuthnRegister implements RequiredActionProvider {
 
     private static final String ERR_LABEL = "web_authn_registration_error";
     private static final String ERR_DETAIL_LABEL = "web_authn_registration_error_detail";
-    private static final String ERR_WEBAUTHN_API_CREATE = "Failed to authenticate by the WebAuthn Authenticator";
-    private static final String ERR_WEBAUTHN_VERIFICATION_FAIL = "WetAuthn Registration result is invalid.";
-    private static final String ERR_REGISTRATION_FAIL = "Failed to register your WebAuthn Authenticator.";
 
     private void setErrorResponse(RequiredActionContext context, final String errorCase, final String errorMessage) {
         Response errorResponse = null;
         switch (errorCase) {
-        case ERR_WEBAUTHN_API_CREATE:
-            logger.warnv("error returned from navigator.credentials.create(). {0}", errorMessage);
-            context.getEvent()
-                .detail(ERR_LABEL, errorCase)
-                .detail(ERR_DETAIL_LABEL, errorMessage)
-                .error(Errors.NOT_ALLOWED);
-            errorResponse = context.form()
-                .setError(errorCase)
-                .createErrorPage(Response.Status.BAD_REQUEST);
-            context.challenge(errorResponse);
-            break;
-        case ERR_WEBAUTHN_VERIFICATION_FAIL:
+        case WEBAUTHN_ERROR_REGISTER_VERIFICATION:
             logger.warnv("WebAuthn API .create() response validation failure. {0}", errorMessage);
             context.getEvent()
                 .detail(ERR_LABEL, errorCase)
@@ -277,10 +356,11 @@ public class WebAuthnRegister implements RequiredActionProvider {
                 .error(Errors.INVALID_USER_CREDENTIALS);
             errorResponse = context.form()
                 .setError(errorCase)
-                .createErrorPage(Response.Status.BAD_REQUEST);
+                .setAttribute(WEB_AUTHN_TITLE_ATTR, WEBAUTHN_REGISTER_TITLE)
+                .createWebAuthnErrorPage();
             context.challenge(errorResponse);
             break;
-        case ERR_REGISTRATION_FAIL:
+        case WEBAUTHN_ERROR_REGISTRATION:
             logger.warn(errorCase);
             context.getEvent()
                 .detail(ERR_LABEL, errorCase)
@@ -288,7 +368,8 @@ public class WebAuthnRegister implements RequiredActionProvider {
                 .error(Errors.INVALID_REGISTRATION);
             errorResponse = context.form()
                 .setError(errorCase)
-                .createErrorPage(Response.Status.BAD_REQUEST);
+                .setAttribute(WEB_AUTHN_TITLE_ATTR, WEBAUTHN_REGISTER_TITLE)
+                .createWebAuthnErrorPage();
             context.challenge(errorResponse);
             break;
         default:

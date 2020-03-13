@@ -41,12 +41,12 @@ export class ContentPage extends React.Component<ContentPageProps> {
         return (
             <React.Fragment>
                 <ContentAlert/>
-                <section className="pf-c-page__main-section pf-m-light">
+                <section id="page-heading" className="pf-c-page__main-section pf-m-light">
                     <Grid>
                         <GridItem span={11}><Title headingLevel='h1' size='3xl'><strong><Msg msgKey={this.props.title}/></strong></Title></GridItem>
                         {this.props.onRefresh && 
                             <GridItem span={1}>
-                                <Tooltip content={<Msg msgKey='refreshPage'/>}><Button variant='plain' onClick={this.props.onRefresh}><RedoIcon size='sm'/></Button></Tooltip>
+                                <Tooltip content={<Msg msgKey='refreshPage'/>}><Button id='refresh-page' variant='plain' onClick={this.props.onRefresh}><RedoIcon size='sm'/></Button></Tooltip>
                             </GridItem>
                         }
                         {this.props.introMessage && <GridItem span={12}> <Msg msgKey={this.props.introMessage}/></GridItem>}

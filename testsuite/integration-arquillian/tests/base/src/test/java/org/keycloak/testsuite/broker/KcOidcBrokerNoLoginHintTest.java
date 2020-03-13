@@ -15,7 +15,7 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.Assert;
 import org.keycloak.testsuite.arquillian.SuiteContext;
 
-public class KcOidcBrokerNoLoginHintTest extends KcOidcBrokerLoginHintTest {
+public class KcOidcBrokerNoLoginHintTest extends AbstractBrokerTest {
 
     @Override
     protected BrokerConfiguration getBrokerConfiguration() {
@@ -42,7 +42,7 @@ public class KcOidcBrokerNoLoginHintTest extends KcOidcBrokerLoginHintTest {
         driver.navigate().to(driver.getCurrentUrl() + "&login_hint=" + USER_EMAIL);
 
         log.debug("Clicking social " + bc.getIDPAlias());
-        accountLoginPage.clickSocial(bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
 
         waitForPage(driver, "log in to", true);
 
@@ -50,10 +50,10 @@ public class KcOidcBrokerNoLoginHintTest extends KcOidcBrokerLoginHintTest {
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
 
         Assert.assertTrue("User identifiant should not be fullfilled",
-                StringUtils.isBlank(accountLoginPage.getUsername()));
+                StringUtils.isBlank(loginPage.getUsername()));
         
         log.debug("Logging in");
-        accountLoginPage.login(bc.getUserLogin(), bc.getUserPassword());
+        loginPage.login(bc.getUserLogin(), bc.getUserPassword());
 
         waitForPage(driver, "update account information", false);
 

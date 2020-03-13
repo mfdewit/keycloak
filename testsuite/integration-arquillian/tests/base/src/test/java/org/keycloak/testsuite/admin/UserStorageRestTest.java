@@ -34,6 +34,8 @@ import org.keycloak.testsuite.util.AdminEventPaths;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.Response;
 import java.util.List;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -74,6 +76,7 @@ public class UserStorageRestTest extends AbstractAdminTest {
 
 
     @Test
+    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testKerberosAuthenticatorEnabledAutomatically() {
         // Assert kerberos authenticator DISABLED
         AuthenticationExecutionInfoRepresentation kerberosExecution = findKerberosExecution();
@@ -99,12 +102,32 @@ public class UserStorageRestTest extends AbstractAdminTest {
         realm.flows().updateExecutions("browser", kerberosExecution);
         assertAdminEvents.assertEvent(realmId, OperationType.UPDATE, AdminEventPaths.authUpdateExecutionPath("browser"), kerberosExecution, ResourceType.AUTH_EXECUTION);
 
-        // update LDAP provider with kerberos
+        // update LDAP provider with kerberos (without changing kerberos switch)
         ldapRep = realm.components().component(id).toRepresentation();
         realm.components().component(id).update(ldapRep);
         assertAdminEvents.clear();
 
-        // Assert kerberos authenticator ALTERNATIVE
+        // Assert kerberos authenticator is still DISABLED
+        kerberosExecution = findKerberosExecution();
+        Assert.assertEquals(kerberosExecution.getRequirement(), AuthenticationExecutionModel.Requirement.DISABLED.toString());
+
+        // update LDAP provider with kerberos (with changing kerberos switch to disabled)
+        ldapRep = realm.components().component(id).toRepresentation();
+        ldapRep.getConfig().putSingle(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION, "false");
+        realm.components().component(id).update(ldapRep);
+        assertAdminEvents.clear();
+
+        // Assert kerberos authenticator is still DISABLED
+        kerberosExecution = findKerberosExecution();
+        Assert.assertEquals(kerberosExecution.getRequirement(), AuthenticationExecutionModel.Requirement.DISABLED.toString());
+
+        // update LDAP provider with kerberos (with changing kerberos switch to enabled)
+        ldapRep = realm.components().component(id).toRepresentation();
+        ldapRep.getConfig().putSingle(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION, "true");
+        realm.components().component(id).update(ldapRep);
+        assertAdminEvents.clear();
+
+        // Assert kerberos authenticator is still ALTERNATIVE
         kerberosExecution = findKerberosExecution();
         Assert.assertEquals(kerberosExecution.getRequirement(), AuthenticationExecutionModel.Requirement.ALTERNATIVE.toString());
 

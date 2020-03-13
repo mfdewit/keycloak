@@ -26,6 +26,8 @@ import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.credential.hash.Pbkdf2Sha256PasswordHashProviderFactory;
 import org.keycloak.models.Constants;
+import org.keycloak.models.credential.PasswordCredentialModel;
+import org.keycloak.models.utils.RepresentationToModel;
 import org.keycloak.representations.idm.*;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.util.ContainerAssume;
@@ -42,11 +44,14 @@ import static org.hamcrest.core.IsNot.not;
 import static org.hamcrest.core.IsNull.notNullValue;
 import static org.hamcrest.text.IsEmptyString.isEmptyOrNullString;
 import static org.junit.Assert.*;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * @author <a href="mailto:mabartos@redhat.com">Martin Bartos</a>
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
+@AuthServerContainerExclude(AuthServer.REMOTE)
 public class AddUserTest extends AbstractKeycloakTest {
 
     @ArquillianResource
@@ -95,8 +100,9 @@ public class AddUserTest extends AbstractKeycloakTest {
         //------------------Credentials-----------------------------//
         assertThat("User Credentials are NULL", user.getCredentials().get(0), notNullValue());
         CredentialRepresentation credentials = user.getCredentials().get(0);
-        assertThat("User Credentials have wrong Algorithm.", credentials.getAlgorithm(), is(Pbkdf2Sha256PasswordHashProviderFactory.ID));
-        assertThat("User Credentials have wrong Hash Iterations", credentials.getHashIterations(), is(100000));
+        PasswordCredentialModel pcm = PasswordCredentialModel.createFromCredentialModel(RepresentationToModel.toModel(credentials));
+        assertThat("User Credentials have wrong Algorithm.", pcm.getPasswordCredentialData().getAlgorithm(), is(Pbkdf2Sha256PasswordHashProviderFactory.ID));
+        assertThat("User Credentials have wrong Hash Iterations", pcm.getPasswordCredentialData().getHashIterations(), is(100000));
 
         //------------------Restart--Container---------------------//
         controller.stop(authServerQualifier);

@@ -8,47 +8,23 @@ import static org.keycloak.testsuite.broker.BrokerTestConstants.IDP_OIDC_PROVIDE
 import static org.keycloak.testsuite.broker.BrokerTestConstants.USER_EMAIL;
 import static org.keycloak.testsuite.broker.BrokerTestTools.createIdentityProvider;
 import static org.keycloak.testsuite.broker.BrokerTestTools.waitForPage;
+import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
+
+import org.junit.Test;
+import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.broker.oidc.mappers.ExternalKeycloakRoleToRoleMapper;
-import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.Assert;
 import org.keycloak.testsuite.arquillian.SuiteContext;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
+import org.keycloak.testsuite.updaters.Creator;
+import org.keycloak.testsuite.util.UserBuilder;
 
 public class KcOidcBrokerLoginHintTest extends AbstractBrokerTest {
 
     @Override
     protected BrokerConfiguration getBrokerConfiguration() {
         return new KcOidcBrokerConfigurationWithLoginHint();
-    }
-
-    @Override
-    protected String getAccountUrl(String realmName) {
-        return BrokerTestTools.getAuthRoot(suiteContext) + "/auth/realms/" + realmName + "/account";
-    }
-
-    @Override
-    protected Iterable<IdentityProviderMapperRepresentation> createIdentityProviderMappers() {
-        IdentityProviderMapperRepresentation attrMapper1 = new IdentityProviderMapperRepresentation();
-        attrMapper1.setName("manager-role-mapper");
-        attrMapper1.setIdentityProviderMapper(ExternalKeycloakRoleToRoleMapper.PROVIDER_ID);
-        attrMapper1.setConfig(ImmutableMap.<String,String>builder()
-                .put("external.role", "manager")
-                .put("role", "manager")
-                .build());
-
-        IdentityProviderMapperRepresentation attrMapper2 = new IdentityProviderMapperRepresentation();
-        attrMapper2.setName("user-role-mapper");
-        attrMapper2.setIdentityProviderMapper(ExternalKeycloakRoleToRoleMapper.PROVIDER_ID);
-        attrMapper2.setConfig(ImmutableMap.<String,String>builder()
-                .put("external.role", "user")
-                .put("role", "user")
-                .build());
-
-        return Lists.newArrayList(attrMapper1, attrMapper2);
     }
     
     private class KcOidcBrokerConfigurationWithLoginHint extends KcOidcBrokerConfiguration {
@@ -71,7 +47,7 @@ public class KcOidcBrokerLoginHintTest extends AbstractBrokerTest {
         driver.navigate().to(driver.getCurrentUrl() + "&login_hint=" + USER_EMAIL);
 
         log.debug("Clicking social " + bc.getIDPAlias());
-        accountLoginPage.clickSocial(bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
 
         waitForPage(driver, "log in to", true);
 
@@ -79,10 +55,10 @@ public class KcOidcBrokerLoginHintTest extends AbstractBrokerTest {
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
 
         Assert.assertTrue("User identifiant should be fullfilled",
-                accountLoginPage.getUsername().equalsIgnoreCase(USER_EMAIL));
+                loginPage.getUsername().equalsIgnoreCase(USER_EMAIL));
         
         log.debug("Logging in");
-        accountLoginPage.login(bc.getUserPassword());
+        loginPage.login(bc.getUserPassword());
 
         waitForPage(driver, "update account information", false);
 
@@ -110,5 +86,33 @@ public class KcOidcBrokerLoginHintTest extends AbstractBrokerTest {
 
         Assert.assertTrue("There must be user " + bc.getUserLogin() + " in realm " + bc.consumerRealmName(),
                 isUserFound);
+    }
+
+    @Test
+    public void loginHintWithExistingUser() {
+        try (Creator<UserResource> c = Creator.create(adminClient.realm(bc.consumerRealmName()),
+                UserBuilder.create()
+                        .username(bc.getUserLogin())
+                        .password(bc.getUserPassword())
+                        .email(bc.getUserEmail())
+                        .enabled(true)
+                        .build()
+            )) {
+            driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+            waitForPageToLoad();
+            driver.navigate().to(driver.getCurrentUrl() + "&login_hint=" + USER_EMAIL + "&kc_idp_hint=" + IDP_OIDC_ALIAS);
+            waitForPageToLoad();
+
+            loginPage.login(bc.getUserPassword());
+
+            updateAccountInformationPage.assertCurrent();
+            updateAccountInformationPage.updateAccountInformation(bc.getUserLogin(), bc.getUserEmail(), "Firstname", "Lastname");
+
+            idpConfirmLinkPage.assertCurrent();
+            idpConfirmLinkPage.clickLinkAccount();
+
+            loginPage.login(bc.getUserPassword());
+            accountPage.isCurrent();
+        }
     }
 }

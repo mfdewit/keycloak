@@ -28,6 +28,7 @@ import org.keycloak.admin.client.resource.AuthorizationResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.models.AdminRoles;
 import org.keycloak.models.Constants;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.representations.KeyStoreConfig;
 import org.keycloak.representations.idm.AuthenticationExecutionInfoRepresentation;
 import org.keycloak.representations.idm.AuthenticationExecutionRepresentation;
@@ -37,7 +38,7 @@ import org.keycloak.representations.idm.ClientInitialAccessCreatePresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.ComponentRepresentation;
-import org.keycloak.representations.idm.ConfigPropertyRepresentation;
+import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
@@ -50,6 +51,7 @@ import org.keycloak.representations.idm.RequiredActionProviderSimpleRepresentati
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
+import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceServerRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
@@ -81,7 +83,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 import static org.keycloak.services.resources.admin.AdminAuth.Resource.AUTHORIZATION;
 import static org.keycloak.services.resources.admin.AdminAuth.Resource.CLIENT;
-import org.keycloak.testsuite.ProfileAssume;
+
 import org.keycloak.testsuite.utils.tls.TLSUtils;
 
 /**
@@ -957,13 +959,10 @@ public class PermissionsTest extends AbstractKeycloakTest {
         invoke(new InvocationWithResponse() {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
                 AuthorizationResource authorization = realm.clients().get(foo.getId()).authorization();
-                PolicyRepresentation representation = new PolicyRepresentation();
+                ResourcePermissionRepresentation representation = new ResourcePermissionRepresentation();
                 representation.setName("Test PermissionsTest");
-                representation.setType("js");
-                HashMap<String, String> config = new HashMap<>();
-                config.put("code", "");
-                representation.setConfig(config);
-                response.set(authorization.policies().create(representation));
+                representation.addResource("Default Resource");
+                response.set(authorization.permissions().resource().create(representation));
             }
         }, AUTHORIZATION, true);
         invoke(new Invocation() {
@@ -1148,7 +1147,7 @@ public class PermissionsTest extends AbstractKeycloakTest {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
                 AuthenticationExecutionRepresentation rep = new AuthenticationExecutionRepresentation();
                 rep.setAuthenticator("auth-cookie");
-                rep.setRequirement("OPTIONAL");
+                rep.setRequirement("CONDITIONAL");
                 response.set(realm.flows().addExecution(rep));
             }
         }, Resource.REALM, true);
@@ -1501,7 +1500,13 @@ public class PermissionsTest extends AbstractKeycloakTest {
         }, Resource.USER, true);
         invoke(new Invocation() {
             public void invoke(RealmResource realm) {
-                realm.users().get(user.getId()).removeTotp();
+                CredentialRepresentation totpCredential = realm.users().get(user.getId()).credentials().stream()
+                        .filter(c -> OTPCredentialModel.TYPE.equals(c.getType())).findFirst().orElse(null);
+                if (totpCredential != null) {
+                    realm.users().get(user.getId()).removeCredential(totpCredential.getId());
+                } else {
+                    realm.users().get(user.getId()).removeCredential("123");
+                }
             }
         }, Resource.USER, true);
         invoke(new Invocation() {
@@ -1653,8 +1658,8 @@ public class PermissionsTest extends AbstractKeycloakTest {
         }, Resource.IDENTITY_PROVIDER, false);
         invoke(new InvocationWithResponse() {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
-                response.set(realm.identityProviders().create(IdentityProviderBuilder.create().providerId("nosuch")
-                        .displayName("nosuch-foo").alias("foo").build()));
+                response.set(realm.identityProviders().create(IdentityProviderBuilder.create().providerId("oidc")
+                        .displayName("nosuch-foo").alias("foo").setAttribute("clientId", "foo").setAttribute("clientSecret", "foo").build()));
             }
         }, Resource.IDENTITY_PROVIDER, true);
 

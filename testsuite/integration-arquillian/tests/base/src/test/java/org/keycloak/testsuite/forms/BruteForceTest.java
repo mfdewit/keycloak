@@ -27,44 +27,76 @@ import org.keycloak.events.Errors;
 import org.keycloak.events.EventType;
 import org.keycloak.models.Constants;
 import org.keycloak.models.utils.TimeBasedOTP;
-import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.AssertEvents.ExpectedEvent;
-import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.AppPage.RequestType;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.pages.LoginPasswordResetPage;
+import org.keycloak.testsuite.pages.LoginPasswordUpdatePage;
 import org.keycloak.testsuite.pages.LoginTotpPage;
 import org.keycloak.testsuite.pages.RegisterPage;
 import org.keycloak.testsuite.util.GreenMailRule;
+import org.keycloak.testsuite.util.MailUtils;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.RealmRepUtil;
 import org.keycloak.testsuite.util.UserBuilder;
 
+import javax.mail.internet.MimeMessage;
 import java.net.MalformedURLException;
 import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer.REMOTE;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  * @author Stan Silvert ssilvert@redhat.com (C) 2016 Red Hat Inc.
  */
+@AuthServerContainerExclude(AuthServer.REMOTE)
 public class BruteForceTest extends AbstractTestRealmKeycloakTest {
 
     private static String userId;
 
+    @Rule
+    public AssertEvents events = new AssertEvents(this);
+
+    @Rule
+    public GreenMailRule greenMail = new GreenMailRule();
+
+    @Page
+    protected AppPage appPage;
+
+    @Page
+    protected LoginPage loginPage;
+
+    @Page
+    protected LoginPasswordResetPage passwordResetPage;
+
+    @Page
+    protected LoginPasswordUpdatePage passwordUpdatePage;
+
+    @Page
+    private RegisterPage registerPage;
+
+    @Page
+    protected LoginTotpPage loginTotpPage;
+
+    private TimeBasedOTP totp = new TimeBasedOTP();
+
+    private int lifespan;
+
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
         UserRepresentation user = RealmRepUtil.findUser(testRealm, "test-user@localhost");
-        CredentialRepresentation credRep = new CredentialRepresentation();
-        credRep.setType(CredentialRepresentation.TOTP);
-        credRep.setValue("totpSecret");
-        user.getCredentials().add(credRep);
-        user.setTotp(Boolean.TRUE);
+        UserBuilder.edit(user).totpSecret("totpSecret");
 
         testRealm.setBruteForceProtected(true);
         testRealm.setFailureFactor(2);
@@ -117,32 +149,6 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
         events.clear();
         Thread.sleep(100);
     }
-
-
-    @Rule
-    public AssertEvents events = new AssertEvents(this);
-
-    @Rule
-    public GreenMailRule greenMail = new GreenMailRule();
-
-    @Page
-    protected AppPage appPage;
-
-    @Page
-    protected LoginPage loginPage;
-
-    @Page
-    protected LoginPasswordResetPage resetPasswordPage;
-
-    @Page
-    private RegisterPage registerPage;
-
-    @Page
-    protected LoginTotpPage loginTotpPage;
-
-    private TimeBasedOTP totp = new TimeBasedOTP();
-
-    private int lifespan;
 
     @Before
     public void before() throws MalformedURLException {
@@ -367,9 +373,6 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
         loginSuccess();
         loginMissingPassword();
         loginMissingPassword();
-        expectTemporarilyDisabled();
-        expectTemporarilyDisabled("test-user@localhost", null, "invalid");
-        clearUserFailures();
         loginSuccess();
     }
 
@@ -380,21 +383,6 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
         loginWithTotpFailure();
         continueLoginWithCorrectTotpExpectFailure();
         continueLoginWithInvalidTotp();
-        clearUserFailures();
-        continueLoginWithTotp();
-    }
-
-    @Test
-    public void testTotpGoingBack() throws Exception {
-        loginPage.open();
-        loginPage.login("test-user@localhost", "password");
-
-        continueLoginWithInvalidTotp();
-        loginTotpPage.cancel();
-        loginPage.assertCurrent();
-        loginPage.login("test-user@localhost", "password");
-        continueLoginWithInvalidTotp();
-        continueLoginWithCorrectTotpExpectFailure();
         clearUserFailures();
         continueLoginWithTotp();
     }
@@ -429,7 +417,7 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
 
             // assert
             expectPermanentlyDisabled();
-            Assert.assertFalse(adminClient.realm("test").users().search("test-user@localhost", 0, 1).get(0).isEnabled());
+            assertFalse(adminClient.realm("test").users().search("test-user@localhost", 0, 1).get(0).isEnabled());
         } finally {
             realm.setPermanentLockout(false);
             testRealm().update(realm);
@@ -455,7 +443,7 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
             loginSuccess();
 
             // assert
-            Assert.assertTrue(adminClient.realm("test").users().search("test-user@localhost", 0, 1).get(0).isEnabled());
+            assertTrue(adminClient.realm("test").users().search("test-user@localhost", 0, 1).get(0).isEnabled());
         } finally {
             realm.setPermanentLockout(false);
             testRealm().update(realm);
@@ -474,25 +462,50 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    @AuthServerContainerExclude(REMOTE) // GreenMailRule is not working atm
     public void testResetPassword() throws Exception {
-        String userId = adminClient.realm("test").users().search("test-user@localhost", null, null, null, 0, 1).get(0).getId();
+        String userId = adminClient.realm("test").users().search("user2", null, null, null, 0, 1).get(0).getId();
 
-        loginSuccess();
-        loginInvalidPassword();
-        loginInvalidPassword();
-        expectTemporarilyDisabled();
-        expectTemporarilyDisabled("test-user@localhost", null, "invalid");
+        loginSuccess("user2");
+        loginInvalidPassword("user2");
+        loginInvalidPassword("user2");
+        expectTemporarilyDisabled("user2", userId, "invalid");
 
         loginPage.resetPassword();
-        resetPasswordPage.assertCurrent();
-        resetPasswordPage.changePassword("test-user@localhost");
+
+        passwordResetPage.assertCurrent();
+        passwordResetPage.changePassword("user2");
+
         loginPage.assertCurrent();
 
         assertEquals("You should receive an email shortly with further instructions.", loginPage.getSuccessMessage());
 
-        events.expectRequiredAction(EventType.RESET_PASSWORD_ERROR).user(userId);
+        events.expectRequiredAction(EventType.SEND_RESET_PASSWORD).user(userId).assertEvent();
+
+        MimeMessage message = greenMail.getReceivedMessages()[0];
+        String passwordResetEmailLink = MailUtils.getPasswordResetEmailLink(message);
+
+        driver.navigate().to(passwordResetEmailLink.trim());
+
+        assertTrue(passwordUpdatePage.isCurrent());
+
+        UserRepresentation userRepresentation = testRealm().users().get(userId).toRepresentation();
+        assertFalse(userRepresentation.isEnabled());
+
+        updatePasswordPage.updatePasswords("password", "password");
+
+        events.expectRequiredAction(EventType.UPDATE_PASSWORD).user(userId).assertEvent();
+
+        userRepresentation = testRealm().users().get(userId).toRepresentation();
+        assertTrue(userRepresentation.isEnabled());
+
+        Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
+
+        appPage.logout();
+
         events.clear();
-        clearUserFailures();
+
+        loginSuccess("user2");
     }
 
     public void expectTemporarilyDisabled() throws Exception {
@@ -530,7 +543,7 @@ public class BruteForceTest extends AbstractTestRealmKeycloakTest {
         loginPage.login(username, "password");
 
         loginPage.assertCurrent();
-        Assert.assertEquals("Account is disabled, contact admin.", loginPage.getError());
+        Assert.assertEquals("Account is disabled, contact your administrator.", loginPage.getError());
         ExpectedEvent event = events.expectLogin()
             .session((String) null)
             .error(Errors.USER_DISABLED)

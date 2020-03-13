@@ -24,7 +24,7 @@
     <parent>
         <groupId>org.keycloak</groupId>
         <artifactId>keycloak-testsuite-pom</artifactId>
-        <version>8.0.0-SNAPSHOT</version>
+        <version>9.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     
@@ -42,20 +42,14 @@
         <app.server>undertow</app.server>
 
         <!-- Wildfly deprecated versions -->
-        <wildfly.deprecated.version>16.0.0.Final</wildfly.deprecated.version>
-        <wildfly.deprecated.wildfly.core.version>8.0.0.Final</wildfly.deprecated.wildfly.core.version>
+        <wildfly.deprecated.version>17.0.1.Final</wildfly.deprecated.version>
+        <wildfly.deprecated.wildfly.core.version>9.0.2.Final</wildfly.deprecated.wildfly.core.version>
         <wildfly.deprecated.arquillian.wildfly.container>2.1.1.Final</wildfly.deprecated.arquillian.wildfly.container>
 
         <!--component versions-->
-        <!--
-            to update arquillian-core to 1.3.0.Final or higher
-                - see https://issues.jboss.org/browse/ARQ-2181 
-                - update org.keycloak.testsuite.arquillian.containers.KeycloakContainerTestExtension according to 
-                  current version of org.jboss.arquillian.container.test.impl.ContainerTestExtension
-        -->
-        <arquillian-core.version>1.2.1.Final</arquillian-core.version>
+        <arquillian-core.version>1.6.0.Final</arquillian-core.version>
         <!--the version of shrinkwrap_resolver should align with the version in arquillian-bom-->
-        <shrinkwrap-resolver.version>2.2.6</shrinkwrap-resolver.version>
+        <shrinkwrap-resolver.version>3.1.4</shrinkwrap-resolver.version>
         <selenium.version>3.14.0</selenium.version>
         <arquillian-drone.version>2.5.1</arquillian-drone.version>
         <arquillian-graphene.version>2.3.2</arquillian-graphene.version>
@@ -282,18 +276,38 @@
             </plugins>
         </pluginManagement>
 
-        <!-- Just allocate the DB now. It will be released after the tests, so the "release" is declared in the base-tests module -->
         <plugins>
             <plugin>
-                <groupId>org.keycloak</groupId>
-                <artifactId>db-allocator-plugin</artifactId>
-                <inherited>false</inherited>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>${version.enforcer.plugin}</version>
                 <executions>
                     <execution>
-                        <id>allocate-db</id>
+                        <id>enforce-maven</id>
                         <goals>
-                            <goal>allocate</goal>
+                            <goal>enforce</goal>
                         </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>3.5.4</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>enforce-maven-for-deploy-phase</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <phase>deploy</phase>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>3.6.0</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -308,6 +322,28 @@
     </modules>
     
     <profiles>
+        <profile>
+            <id>jpa</id>
+            <build>
+                <plugins>
+                    <!-- Just allocate the DB now. It will be released after the tests, so the "release" is declared in the base-tests module -->
+                    <plugin>
+                        <groupId>org.keycloak</groupId>
+                        <artifactId>db-allocator-plugin</artifactId>
+                        <inherited>false</inherited>
+                        <executions>
+                            <execution>
+                                <id>allocate-db</id>
+                                <goals>
+                                    <goal>allocate</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        
         <profile>
             <id>test-70-migration</id>
             <properties>
@@ -412,15 +448,14 @@
                 <keycloak.connectionsJpa.database>keycloak</keycloak.connectionsJpa.database>
                 <keycloak.connectionsJpa.user>keycloak</keycloak.connectionsJpa.user>
                 <keycloak.connectionsJpa.password>keycloak</keycloak.connectionsJpa.password>
-                <!-- Disable SSL is needed when using newer JDBC drivers like mysql 8.0.12 to avoid warnings in the log -->
-                <keycloak.connectionsJpa.url>jdbc:mysql://${auth.server.db.host}/${keycloak.connectionsJpa.database}?useSSL=false</keycloak.connectionsJpa.url>
+                <keycloak.connectionsJpa.url>jdbc:mysql://${auth.server.db.host}/${keycloak.connectionsJpa.database}?allowPublicKeyRetrieval=true</keycloak.connectionsJpa.url>
                 <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
                 <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
                 <!-- for the particular EAP version -->
                 <jdbc.mvn.groupId>mysql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mysql-connector-java</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>${mysql.version}</jdbc.mvn.version>
-                <docker.database.image>mysql:5.7.25</docker.database.image>
+                <docker.database.image>mysql:8.0.18</docker.database.image>
                 <docker.database.port>3306</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <docker.database.cmd>mysqld</docker.database.cmd>
@@ -436,7 +471,7 @@
                 <jdbc.mvn.groupId>mysql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mysql-connector-java</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>${mysql.version}</jdbc.mvn.version>
-                <dballocator.type>mysql57</dballocator.type>
+                <dballocator.type>mysql80</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
@@ -454,7 +489,7 @@
                 <jdbc.mvn.groupId>org.postgresql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>postgresql</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>${postgresql.version}</jdbc.mvn.version>
-                <docker.database.image>postgres:10.1</docker.database.image>
+                <docker.database.image>postgres:11.5</docker.database.image>
                 <docker.database.port>5432</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <docker.database.cmd>postgres</docker.database.cmd>
@@ -470,7 +505,7 @@
                 <jdbc.mvn.groupId>org.postgresql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>postgresql</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>${postgresql.version}</jdbc.mvn.version>
-                <dballocator.type>postgresql96</dballocator.type>
+                <dballocator.type>postgresql115</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
@@ -546,7 +581,7 @@
             </properties>
         </profile>
         <profile>
-            <id>db-allocator-db-mssql2016</id>
+            <id>db-allocator-db-mssql2017</id>
             <properties>
                 <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
                 <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
@@ -554,7 +589,7 @@
                 <jdbc.mvn.groupId>com.microsoft.sqlserver</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mssql-jdbc</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>${mssql.version}</jdbc.mvn.version>
-                <dballocator.type>mssql2016</dballocator.type>
+                <dballocator.type>mssql2017</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
@@ -582,7 +617,7 @@
             </properties>
         </profile>
         <profile>
-            <id>db-allocator-db-oracle12cR1RAC</id>
+            <id>db-allocator-db-oracleRAC</id>
             <properties>
                 <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
                 <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
@@ -590,7 +625,7 @@
                 <jdbc.mvn.groupId>com.oracle</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>ojdbc8</jdbc.mvn.artifactId>
                 <jdbc.mvn.version>12.2.0.1</jdbc.mvn.version>
-                <dballocator.type>oracle12cR1RAC</dballocator.type>
+                <dballocator.type>oracle19cRAC</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>

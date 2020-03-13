@@ -148,6 +148,10 @@ public abstract class AbstractSamlAuthenticationHandler implements SamlAuthentic
             postBinding = true;
             holder = SAMLRequestParser.parseRequestPostBinding(samlRequest);
         }
+        if (holder == null) {
+            log.error("Error parsing SAML document");
+            return AuthOutcome.FAILED;
+        }
         RequestAbstractType requestAbstractType = (RequestAbstractType) holder.getSamlObject();
         if (! destinationValidator.validate(requestUri, requestAbstractType.getDestination())) {
             log.error("expected destination '" + requestUri + "' got '" + requestAbstractType.getDestination() + "'");
@@ -187,6 +191,24 @@ public abstract class AbstractSamlAuthenticationHandler implements SamlAuthentic
         } else {
             postBinding = true;
             holder = extractPostBindingResponse(samlResponse);
+        }
+        if (holder == null) {
+            log.error("Error parsing SAML document");
+            challenge = new AuthChallenge() {
+                @Override
+                public boolean challenge(HttpFacade exchange) {
+                    SamlAuthenticationError error = new SamlAuthenticationError(SamlAuthenticationError.Reason.EXTRACTION_FAILURE);
+                    exchange.getRequest().setError(error);
+                    exchange.getResponse().sendError(403);
+                    return true;
+                }
+
+                @Override
+                public int getResponseCode() {
+                    return 403;
+                }
+            };
+            return AuthOutcome.FAILED;
         }
         final StatusResponseType statusResponse = (StatusResponseType) holder.getSamlObject();
         // validate destination
@@ -348,8 +370,10 @@ public abstract class AbstractSamlAuthenticationHandler implements SamlAuthentic
             try {
                 cvb.clockSkewInMillis(deployment.getIDP().getAllowedClockSkew());
                 cvb.addAllowedAudience(URI.create(deployment.getEntityID()));
-                // getDestination has been validated to match request URL already so it matches SAML endpoint
-                cvb.addAllowedAudience(URI.create(responseType.getDestination()));
+                if (responseType.getDestination() != null) {
+                  // getDestination has been validated to match request URL already so it matches SAML endpoint
+                  cvb.addAllowedAudience(URI.create(responseType.getDestination()));
+                }
             } catch (IllegalArgumentException ex) {
                 // warning has been already emitted in DeploymentBuilder
             }
@@ -567,19 +591,20 @@ public abstract class AbstractSamlAuthenticationHandler implements SamlAuthentic
     }
 
     private String getAttributeValue(Object attrValue) {
-        String value = null;
-        if (attrValue instanceof String) {
-            value = (String) attrValue;
+        if (attrValue == null) {
+            return "";
+        } else if (attrValue instanceof String) {
+            return (String) attrValue;
         } else if (attrValue instanceof Node) {
             Node roleNode = (Node) attrValue;
-            value = roleNode.getFirstChild().getNodeValue();
+            return roleNode.getFirstChild().getNodeValue();
         } else if (attrValue instanceof NameIDType) {
             NameIDType nameIdType = (NameIDType) attrValue;
-            value = nameIdType.getValue();
+            return nameIdType.getValue();
         } else {
             log.warn("Unable to extract unknown SAML assertion attribute value type: " + attrValue.getClass().getName());
         }
-        return value;
+        return null;
     }
 
     protected boolean isRole(AttributeType attribute) {

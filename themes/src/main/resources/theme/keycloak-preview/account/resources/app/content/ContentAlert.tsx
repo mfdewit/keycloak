@@ -39,38 +39,38 @@ export class ContentAlert extends React.Component<ContentAlertProps, ContentAler
     /**
      * @param message A literal text message or localization key.
      */
-    public static success(message: string): void {
-        ContentAlert.instance.postAlert(message, 'success');
+    public static success(message: string, params?: string[]): void {
+        ContentAlert.instance.postAlert('success', message, params);
     }
     
     /**
      * @param message A literal text message or localization key.
      */
-    public static danger(message: string): void {
-        ContentAlert.instance.postAlert(message, 'danger');
+    public static danger(message: string, params?: string[]): void {
+        ContentAlert.instance.postAlert('danger', message, params);
     }
     
     /**
      * @param message A literal text message or localization key.
      */
-    public static warning(message: string): void {
-        ContentAlert.instance.postAlert(message, 'warning');
+    public static warning(message: string, params?: string[]): void {
+        ContentAlert.instance.postAlert('warning', message, params);
     }
     
     /**
      * @param message A literal text message or localization key.
      */
-    public static info(message: string): void {
-        ContentAlert.instance.postAlert(message, 'info');
+    public static info(message: string, params?: string[]): void {
+        ContentAlert.instance.postAlert('info', message, params);
     }
     
     private hideAlert = () => {
         this.setState({isVisible: false});
     }
     
-    private postAlert = (message: string, variant: AlertVariant) => {
+    private postAlert = (variant: AlertVariant, message: string, params?: string[]) => {
         this.setState({isVisible: true, 
-                       message: Msg.localize(message), 
+                       message: Msg.localize(message, params), 
                        variant});
         
         if (variant !== 'danger') {
@@ -84,11 +84,12 @@ export class ContentAlert extends React.Component<ContentAlertProps, ContentAler
             { this.state.isVisible &&
                 <section className="pf-c-page__main-section pf-m-light">
                     <Alert
+                      id="content-alert"
                       title=''
                       variant={this.state.variant}
                       variantLabel=''
                       aria-label=''
-                      action={<AlertActionCloseButton onClose={this.hideAlert} />}
+                      action={<AlertActionCloseButton id="content-alert-close" onClose={this.hideAlert} />}
                     >
                         {this.state.message}
                     </Alert>

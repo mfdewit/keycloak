@@ -17,8 +17,9 @@
 
 package org.keycloak.services.resources.admin;
 
+import org.apache.commons.lang.StringUtils;
 import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.NotFoundException;
+import javax.ws.rs.NotFoundException;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.ClientModel;
@@ -55,7 +56,9 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -92,13 +95,29 @@ public class RoleContainerResource extends RoleResource {
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<RoleRepresentation> getRoles() {
+    public List<RoleRepresentation> getRoles(@QueryParam("search") @DefaultValue("") String search,
+                                             @QueryParam("first") Integer firstResult,
+                                             @QueryParam("max") Integer maxResults,
+                                             @QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
         auth.roles().requireList(roleContainer);
 
-        Set<RoleModel> roleModels = roleContainer.getRoles();
+        Set<RoleModel> roleModels = new HashSet<RoleModel>();
+
+        if(search != null && search.trim().length() > 0) {
+            roleModels = roleContainer.searchForRoles(search, firstResult, maxResults);
+        } else if (!Objects.isNull(firstResult) && !Objects.isNull(maxResults)) {
+            roleModels = roleContainer.getRoles(firstResult, maxResults);
+        } else {
+            roleModels = roleContainer.getRoles();
+        }
+
         List<RoleRepresentation> roles = new ArrayList<RoleRepresentation>();
         for (RoleModel roleModel : roleModels) {
-            roles.add(ModelToRepresentation.toBriefRepresentation(roleModel));
+            if(briefRepresentation) {
+                roles.add(ModelToRepresentation.toBriefRepresentation(roleModel));  
+            } else {
+                roles.add(ModelToRepresentation.toRepresentation(roleModel));               
+            }
         }
         return roles;
     }
@@ -419,7 +438,7 @@ public class RoleContainerResource extends RoleResource {
      * @param roleName
      * @param firstResult
      * @param maxResults
-     * @param fullRepresentation if true, return a full representation of the GroupRepresentation objects
+     * @param briefRepresentation if false, return a full representation of the GroupRepresentation objects
      * @return
      */
     @Path("{role-name}/groups")
@@ -429,7 +448,7 @@ public class RoleContainerResource extends RoleResource {
     public  List<GroupRepresentation> getGroupsInRole(final @PathParam("role-name") String roleName, 
                                                     @QueryParam("first") Integer firstResult,
                                                     @QueryParam("max") Integer maxResults,
-                                                    @QueryParam("full") @DefaultValue("false") boolean fullRepresentation) {
+                                                    @QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
         
         auth.roles().requireView(roleContainer);
         firstResult = firstResult != null ? firstResult : 0;
@@ -444,7 +463,7 @@ public class RoleContainerResource extends RoleResource {
         List<GroupModel> groupsModel = session.realms().getGroupsByRole(realm, role, firstResult, maxResults);
 
         return groupsModel.stream()
-        		.map(g -> ModelToRepresentation.toRepresentation(g, fullRepresentation))
+        		.map(g -> ModelToRepresentation.toRepresentation(g, !briefRepresentation))
         		.collect(Collectors.toList());
     }   
 }

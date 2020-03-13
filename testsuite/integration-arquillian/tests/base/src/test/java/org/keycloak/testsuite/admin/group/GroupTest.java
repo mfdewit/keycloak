@@ -17,6 +17,7 @@
 
 package org.keycloak.testsuite.admin.group;
 
+import com.google.common.collect.Comparators;
 import org.junit.Assert;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.GroupResource;
@@ -28,8 +29,6 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
-import org.keycloak.models.UserModel;
-import org.keycloak.models.utils.RepresentationToModel;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -54,6 +53,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -68,9 +68,14 @@ import org.junit.Rule;
 import org.junit.rules.ExpectedException;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.models.AdminRoles;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import static org.keycloak.testsuite.Assert.assertNames;
 import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
+import org.keycloak.testsuite.arquillian.annotation.UncaughtServerErrorExpected;
 import org.keycloak.testsuite.auth.page.AuthRealm;
+import org.keycloak.testsuite.runonserver.RunOnServerException;
 import org.keycloak.testsuite.util.GroupBuilder;
 
 /**
@@ -184,6 +189,43 @@ public class GroupTest extends AbstractGroupTest {
         response = realm.groups().group(topGroup.getId()).subGroup(anotherlevel2Group);
         response.close();
         assertEquals(409, response.getStatus()); // conflict status 409 - same name not allowed
+    }
+
+    @Test
+    public void allowSameGroupNameAtDifferentLevel() throws Exception {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        // creating "/test-group"
+        GroupRepresentation topGroup = new GroupRepresentation();
+        topGroup.setName("test-group");
+        topGroup = createGroup(realm, topGroup);
+
+        // creating "/test-group/test-group"
+        GroupRepresentation childGroup = new GroupRepresentation();
+        childGroup.setName("test-group");
+        try (Response response = realm.groups().group(topGroup.getId()).subGroup(childGroup)) {
+            assertEquals(201, response.getStatus());
+        }
+
+        assertNotNull(realm.getGroupByPath("/test-group/test-group"));
+    }
+
+    @Test
+    @UncaughtServerErrorExpected
+    public void doNotAllowSameGroupNameAtTopLevelInDatabase() throws Exception {
+        final String id = KeycloakModelUtils.generateId();
+        testingClient.server().run(session -> {
+            RealmModel realm = session.realms().getRealm("test");
+            realm.createGroup(id, "test-group");
+        });
+        getCleanup().addGroupId(id);
+        // unique key should work even in top groups
+        expectedException.expect(RunOnServerException.class);
+        expectedException.expectMessage(ModelDuplicateException.class.getName());
+        testingClient.server().run(session -> {
+            RealmModel realm = session.realms().getRealm("test");
+            realm.createGroup("test-group");
+        });
     }
 
     @Test
@@ -688,7 +730,7 @@ public class GroupTest extends AbstractGroupTest {
 		group.setAttributes(attributes);
         group = createGroup(realm, group);
         
-        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20, true);
+        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20, false);
         
         assertFalse(groups.isEmpty());
         assertTrue(groups.get(0).getAttributes().containsKey("attribute1"));
@@ -766,6 +808,58 @@ public class GroupTest extends AbstractGroupTest {
 
         assertEquals(new Long(allGroups.size()), realm.groups().count(true).get("count"));
         assertEquals(new Long(allGroups.size() + 1), realm.groups().count(false).get("count"));
+    }
+
+    @Test
+    public void orderGroupsByName() throws Exception {
+        RealmResource realm = this.adminClient.realms().realm("test");
+
+        // Clean up all test groups
+        for (GroupRepresentation group : realm.groups().groups()) {
+            GroupResource resource = realm.groups().group(group.getId());
+            resource.remove();
+            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
+        }
+
+        // Create two pages worth of groups in a random order
+        List<GroupRepresentation> testGroups = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            GroupRepresentation group = new GroupRepresentation();
+            group.setName("group" + i);
+            testGroups.add(group);
+        }
+
+        Collections.shuffle(testGroups);
+
+        for (GroupRepresentation group : testGroups) {
+            group = createGroup(realm, group);
+        }
+
+        // Groups should be ordered by name
+        Comparator<GroupRepresentation> compareByName = Comparator.comparing(GroupRepresentation::getName);
+
+        // Assert that all groups are returned in order
+        List<GroupRepresentation> allGroups = realm.groups().groups();
+        assertEquals(40, allGroups.size());
+        assertTrue(Comparators.isInStrictOrder(allGroups, compareByName));
+
+        // Assert that pagination results are returned in order
+        List<GroupRepresentation> firstPage = realm.groups().groups(0, 20);
+        assertEquals(20, firstPage.size());
+        assertTrue(Comparators.isInStrictOrder(firstPage, compareByName));
+
+        List<GroupRepresentation> secondPage = realm.groups().groups(20, 20);
+        assertEquals(20, secondPage.size());
+        assertTrue(Comparators.isInStrictOrder(secondPage, compareByName));
+
+        // Check that the ordering of groups across multiple pages is correct
+        // Since the individual pages are ordered it is sufficient to compare 
+        // every group from the first page to the first group of the second page
+        GroupRepresentation firstGroupOnSecondPage = secondPage.get(0);
+        for (GroupRepresentation firstPageGroup : firstPage) {
+            int comparisonResult = compareByName.compare(firstPageGroup, firstGroupOnSecondPage);
+            assertTrue(comparisonResult < 0);
+        }
     }
 
     @Test

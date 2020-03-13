@@ -17,11 +17,16 @@
 
 package org.keycloak.testsuite.admin;
 
-import org.jboss.arquillian.container.test.api.Deployment;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.util.EntityUtils;
 import org.jboss.arquillian.graphene.page.Page;
 import org.jboss.resteasy.client.jaxrs.ResteasyClient;
 import org.jboss.resteasy.client.jaxrs.ResteasyClientBuilder;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -51,10 +56,11 @@ import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.auth.page.AuthRealm;
 import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.LoginPage;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.util.AdminClientUtil;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.CredentialBuilder;
@@ -64,22 +70,23 @@ import org.keycloak.testsuite.util.UserBuilder;
 import org.openqa.selenium.Cookie;
 
 import javax.ws.rs.ClientErrorException;
-import javax.ws.rs.client.Client;
 import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.NewCookie;
 import javax.ws.rs.core.Response;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.keycloak.testsuite.util.OAuthClient.AUTH_SERVER_ROOT;
 
 /**
  * Tests Undertow Adapter
  *
  * @author <a href="mailto:bburke@redhat.com">Bill Burke</a>
  */
+@AuthServerContainerExclude(AuthServer.REMOTE)
 public class ImpersonationTest extends AbstractKeycloakTest {
 
     static class UserSessionNotesHolder {
@@ -111,12 +118,6 @@ public class ImpersonationTest extends AbstractKeycloakTest {
     protected LoginPage loginPage;
 
     private String impersonatedUserId;
-
-    @Deployment
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(ImpersonationTest.class, AbstractKeycloakTest.class, UserResource.class)
-                .addPackages(true, "org.keycloak.testsuite", "org.keycloak.admin.client", "org.openqa.selenium");
-    }
 
     @Override
     public void addTestRealms(List<RealmRepresentation> testRealms) {
@@ -244,21 +245,19 @@ public class ImpersonationTest extends AbstractKeycloakTest {
     }
 
     private Cookie impersonate(Keycloak adminClient, String admin, String adminRealm) {
-        Client httpClient = javax.ws.rs.client.ClientBuilder.newClient();
+        BasicCookieStore cookieStore = new BasicCookieStore();
+        try (CloseableHttpClient httpClient = HttpClientBuilder.create().setDefaultCookieStore(cookieStore).build()) {
 
-        try (Response response = httpClient.target(OAuthClient.AUTH_SERVER_ROOT)
-                .path("admin")
-                .path("realms")
-                .path("test")
-                .path("users/" + impersonatedUserId + "/impersonation")
-                .request()
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminClient.tokenManager().getAccessTokenString())
-                .post(null)) {
+            HttpUriRequest req = RequestBuilder.post()
+                    .setUri(AUTH_SERVER_ROOT + "/admin/realms/test/users/" + impersonatedUserId + "/impersonation")
+                    .addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + adminClient.tokenManager().getAccessTokenString())
+                    .build();
 
-            Map data = response.readEntity(Map.class);
+            HttpResponse res = httpClient.execute(req);
+            String resBody = EntityUtils.toString(res.getEntity());
 
-            Assert.assertNotNull(data);
-            Assert.assertNotNull(data.get("redirect"));
+            Assert.assertNotNull(resBody);
+            Assert.assertTrue(resBody.contains("redirect"));
 
             events.expect(EventType.IMPERSONATE)
                     .session(AssertEvents.isUUID())
@@ -281,10 +280,15 @@ public class ImpersonationTest extends AbstractKeycloakTest {
             Assert.assertNotNull(notes.get(ImpersonationSessionNote.IMPERSONATOR_ID.toString()));
             Assert.assertEquals(admin, notes.get(ImpersonationSessionNote.IMPERSONATOR_USERNAME.toString()));
 
-            NewCookie cookie = response.getCookies().get(AuthenticationManager.KEYCLOAK_IDENTITY_COOKIE);
+            org.apache.http.cookie.Cookie cookie = cookieStore.getCookies().stream()
+                    .filter(c -> c.getName().equals(AuthenticationManager.KEYCLOAK_IDENTITY_COOKIE))
+                    .findAny().orElse(null);
             Assert.assertNotNull(cookie);
 
-            return new Cookie(cookie.getName(), cookie.getValue(), cookie.getDomain(), cookie.getPath(), cookie.getExpiry(), cookie.isSecure(), cookie.isHttpOnly());
+            return new Cookie(cookie.getName(), cookie.getValue(), cookie.getDomain(), cookie.getPath(), cookie.getExpiryDate(), cookie.isSecure(), true);
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 

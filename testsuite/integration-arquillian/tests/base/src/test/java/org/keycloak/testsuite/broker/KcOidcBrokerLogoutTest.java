@@ -5,6 +5,8 @@ import org.junit.Test;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.services.managers.AuthenticationManager;
+import org.openqa.selenium.Cookie;
 
 import javax.ws.rs.core.Response;
 import java.util.List;
@@ -74,8 +76,7 @@ public class KcOidcBrokerLogoutTest extends AbstractBaseBrokerTest {
         logoutFromRealm(bc.consumerRealmName(), "kc-oidc-idp");
         driver.navigate().to(getAccountUrl(REALM_PROV_NAME));
 
-        //could be 'keycloak account management' or 'rh-sso account management'
-        waitForPage(driver, " account management", true);
+        waitForAccountManagementTitle();
     }
 
     @Test
@@ -85,6 +86,24 @@ public class KcOidcBrokerLogoutTest extends AbstractBaseBrokerTest {
 
         logoutFromRealm(bc.consumerRealmName(), "something-else");
         driver.navigate().to(getAccountUrl(REALM_PROV_NAME));
+        waitForPage(driver, "log in to provider", true);
+    }
+
+    @Test
+    public void logoutAfterBrowserRestart() {
+        logInAsUserInIDPForFirstTime();
+        assertLoggedInAccountManagement();
+
+        Cookie identityCookie = driver.manage().getCookieNamed(AuthenticationManager.KEYCLOAK_IDENTITY_COOKIE);
+        String idToken = identityCookie.getValue();
+
+        // simulate browser restart by deleting an identity cookie
+        log.debugf("Deleting %s cookie", AuthenticationManager.KEYCLOAK_IDENTITY_COOKIE);
+        driver.manage().deleteCookieNamed(AuthenticationManager.KEYCLOAK_IDENTITY_COOKIE);
+
+        logoutFromRealm(bc.consumerRealmName(), null, idToken);
+        driver.navigate().to(getAccountUrl(REALM_PROV_NAME));
+
         waitForPage(driver, "log in to provider", true);
     }
 }

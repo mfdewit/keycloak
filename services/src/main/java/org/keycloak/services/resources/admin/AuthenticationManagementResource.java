@@ -18,8 +18,8 @@ package org.keycloak.services.resources.admin;
 
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.BadRequestException;
-import org.jboss.resteasy.spi.NotFoundException;
+import javax.ws.rs.BadRequestException;
+import javax.ws.rs.NotFoundException;
 import org.keycloak.authentication.AuthenticationFlow;
 import org.keycloak.authentication.Authenticator;
 import org.keycloak.authentication.ClientAuthenticator;
@@ -459,7 +459,13 @@ public class AuthenticationManagementResource {
 
         AuthenticationExecutionModel execution = new AuthenticationExecutionModel();
         execution.setParentFlow(parentFlow.getId());
-        execution.setRequirement(AuthenticationExecutionModel.Requirement.DISABLED);
+
+        ConfigurableAuthenticatorFactory conf = (ConfigurableAuthenticatorFactory) f;
+        if (conf.getRequirementChoices().length == 1)
+            execution.setRequirement(conf.getRequirementChoices()[0]);
+        else
+            execution.setRequirement(AuthenticationExecutionModel.Requirement.DISABLED);
+
         execution.setAuthenticatorFlow(false);
         execution.setAuthenticator(provider);
         execution.setPriority(getNextPriority(parentFlow));
@@ -509,9 +515,10 @@ public class AuthenticationManagementResource {
             if (execution.isAuthenticatorFlow()) {
                 AuthenticationFlowModel flowRef = realm.getAuthenticationFlowById(execution.getFlowId());
                 if (AuthenticationFlow.BASIC_FLOW.equals(flowRef.getProviderId())) {
-                    rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.ALTERNATIVE.name());
                     rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.REQUIRED.name());
+                    rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.ALTERNATIVE.name());
                     rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.DISABLED.name());
+                    rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.CONDITIONAL.name());
                 } else if (AuthenticationFlow.FORM_FLOW.equals(flowRef.getProviderId())) {
                     rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.REQUIRED.name());
                     rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.DISABLED.name());
@@ -913,6 +920,7 @@ public class AuthenticationManagementResource {
     public static RequiredActionProviderRepresentation toRepresentation(RequiredActionProviderModel model) {
         RequiredActionProviderRepresentation rep = new RequiredActionProviderRepresentation();
         rep.setAlias(model.getAlias());
+        rep.setProviderId(model.getProviderId());
         rep.setName(model.getName());
         rep.setDefaultAction(model.isDefaultAction());
         rep.setPriority(model.getPriority());
@@ -1168,7 +1176,6 @@ public class AuthenticationManagementResource {
             throw new NotFoundException("Could not find authenticator config");
 
         }
-        List<AuthenticationFlowModel> flows = new LinkedList<>();
         for (AuthenticationFlowModel flow : realm.getAuthenticationFlows()) {
             for (AuthenticationExecutionModel exe : realm.getAuthenticationExecutions(flow.getId())) {
                 if (id.equals(exe.getAuthenticatorConfig())) {
@@ -1201,7 +1208,7 @@ public class AuthenticationManagementResource {
 
         }
         exists.setAlias(rep.getAlias());
-        exists.setConfig(rep.getConfig());
+        exists.setConfig(RepresentationToModel.removeEmptyString(rep.getConfig()));
         realm.updateAuthenticatorConfig(exists);
         adminEvent.operation(OperationType.UPDATE).resource(ResourceType.AUTHENTICATOR_CONFIG).resourcePath(session.getContext().getUri()).representation(rep).success();
     }

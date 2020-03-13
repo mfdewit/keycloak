@@ -20,7 +20,6 @@ import org.keycloak.component.ComponentModel;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputUpdater;
 import org.keycloak.credential.CredentialInputValidator;
-import org.keycloak.credential.CredentialModel;
 import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.LDAPConstants;
@@ -28,7 +27,9 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.credential.PasswordUserCredentialModel;
 import org.keycloak.storage.ReadOnlyException;
+import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.storage.StorageId;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.adapter.AbstractUserAdapterFederatedStorage;
@@ -60,8 +61,8 @@ public class UserMapStorage implements UserLookupProvider, UserStorageProvider, 
 
     private static final Logger log = Logger.getLogger(UserMapStorage.class);
     
-    protected Map<String, String> userPasswords;
-    protected ConcurrentMap<String, Set<String>> userGroups;
+    protected final Map<String, String> userPasswords;
+    protected final ConcurrentMap<String, Set<String>> userGroups;
     protected ComponentModel model;
     protected KeycloakSession session;
     protected EditMode editMode;
@@ -149,7 +150,7 @@ public class UserMapStorage implements UserLookupProvider, UserStorageProvider, 
 
     @Override
     public boolean supportsCredentialType(String credentialType) {
-        return CredentialModel.PASSWORD.equals(credentialType);
+        return PasswordCredentialModel.TYPE.equals(credentialType);
     }
 
     @Override
@@ -160,8 +161,8 @@ public class UserMapStorage implements UserLookupProvider, UserStorageProvider, 
         if (!(input instanceof UserCredentialModel)) {
             return false;
         }
-        if (input.getType().equals(UserCredentialModel.PASSWORD)) {
-            userPasswords.put(user.getUsername(), ((UserCredentialModel) input).getValue());
+        if (input.getType().equals(PasswordCredentialModel.TYPE)) {
+            userPasswords.put(user.getUsername(), input.getChallengeResponse());
             return true;
 
         } else {
@@ -181,16 +182,19 @@ public class UserMapStorage implements UserLookupProvider, UserStorageProvider, 
 
     @Override
     public boolean isConfiguredFor(RealmModel realm, UserModel user, String credentialType) {
-        return CredentialModel.PASSWORD.equals(credentialType);
+        return PasswordCredentialModel.TYPE.equals(credentialType);
     }
 
     @Override
     public boolean isValid(RealmModel realm, UserModel user, CredentialInput input) {
-        if (!(input instanceof UserCredentialModel)) {
+        // Test "instanceof PasswordUserCredentialModel" on purpose. We want to test that the backwards compatibility
+        if (!(input instanceof PasswordUserCredentialModel)) {
             return false;
         }
-        if (input.getType().equals(UserCredentialModel.PASSWORD)) {
+        if (input.getType().equals(PasswordCredentialModel.TYPE)) {
             String pw = userPasswords.get(user.getUsername());
+
+            // Using "getValue" on purpose here, to test that backwards compatibility works as expected
             return pw != null && pw.equals(((UserCredentialModel) input).getValue());
         } else {
             return false;
@@ -345,6 +349,7 @@ public class UserMapStorage implements UserLookupProvider, UserStorageProvider, 
 
             switch (key) {
                 case UserModel.USERNAME:
+                case UserModel.SEARCH:
                     userStream = userStream.filter(s -> s.toLowerCase().contains(value.toLowerCase()));
             }
         }

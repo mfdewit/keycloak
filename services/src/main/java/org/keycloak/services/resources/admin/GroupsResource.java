@@ -17,7 +17,7 @@
 package org.keycloak.services.resources.admin;
 
 import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.NotFoundException;
+import javax.ws.rs.NotFoundException;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
@@ -75,17 +75,17 @@ public class GroupsResource {
     public List<GroupRepresentation> getGroups(@QueryParam("search") String search,
                                                @QueryParam("first") Integer firstResult,
                                                @QueryParam("max") Integer maxResults,
-                                               @QueryParam("full") @DefaultValue("false") boolean fullRepresentation) {
+                                               @QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
         auth.groups().requireList();
 
         List<GroupRepresentation> results;
 
         if (Objects.nonNull(search)) {
-            results = ModelToRepresentation.searchForGroupByName(realm, fullRepresentation, search.trim(), firstResult, maxResults);
+            results = ModelToRepresentation.searchForGroupByName(realm, !briefRepresentation, search.trim(), firstResult, maxResults);
         } else if(Objects.nonNull(firstResult) && Objects.nonNull(maxResults)) {
-            results = ModelToRepresentation.toGroupHierarchy(realm, fullRepresentation, firstResult, maxResults);
+            results = ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation, firstResult, maxResults);
         } else {
-            results = ModelToRepresentation.toGroupHierarchy(realm, fullRepresentation);
+            results = ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation);
         }
 
         return results;
@@ -164,7 +164,6 @@ public class GroupsResource {
             rep.setId(child.getId());
             adminEvent.operation(OperationType.CREATE).resourcePath(session.getContext().getUri(), child.getId());
         }
-        realm.moveGroup(child, null);
 
         adminEvent.representation(rep).success();
         return builder.build();

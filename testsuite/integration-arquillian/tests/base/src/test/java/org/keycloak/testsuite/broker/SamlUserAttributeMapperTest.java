@@ -6,9 +6,6 @@ import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
-/**
- * Refers to in old testsuite: org.keycloak.testsuite.broker.SAMLBrokerUserPropertyTest
- */
 public class SamlUserAttributeMapperTest extends AbstractUserAttributeMapperTest {
 
     @Override
@@ -46,7 +43,7 @@ public class SamlUserAttributeMapperTest extends AbstractUserAttributeMapperTest
         attrMapper1.setName("attribute-mapper");
         attrMapper1.setIdentityProviderMapper(UserAttributeMapper.PROVIDER_ID);
         attrMapper1.setConfig(ImmutableMap.<String,String>builder()
-          .put(UserAttributeMapper.ATTRIBUTE_NAME, ATTRIBUTE_TO_MAP_NAME)
+          .put(UserAttributeMapper.ATTRIBUTE_NAME, KcOidcBrokerConfiguration.ATTRIBUTE_TO_MAP_NAME)
           .put(UserAttributeMapper.USER_ATTRIBUTE, MAPPED_ATTRIBUTE_NAME)
           .build());
 

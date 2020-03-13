@@ -16,7 +16,6 @@
  */
 package org.keycloak.authorization.authorization;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -38,7 +37,6 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
-import org.apache.http.HttpStatus;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.spi.HttpRequest;
 import org.keycloak.OAuthErrorException;
@@ -83,6 +81,7 @@ import org.keycloak.services.CorsErrorResponseException;
 import org.keycloak.services.ErrorResponseException;
 import org.keycloak.services.Urls;
 import org.keycloak.services.managers.AuthenticationManager;
+import org.keycloak.services.managers.AuthenticationSessionManager;
 import org.keycloak.services.resources.Cors;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.sessions.RootAuthenticationSessionModel;
@@ -236,7 +235,7 @@ public class AuthorizationTokenService {
 
     private Response createSuccessfulResponse(Object response, KeycloakAuthorizationRequest request) {
         return Cors.add(request.getHttpRequest(), Response.status(Status.OK).type(MediaType.APPLICATION_JSON_TYPE).entity(response))
-                .allowedOrigins(request.getKeycloakSession().getContext().getUri(), request.getKeycloakSession().getContext().getClient())
+                .allowedOrigins(request.getKeycloakSession(), request.getKeycloakSession().getContext().getClient())
                 .allowedMethods(HttpMethod.POST)
                 .exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
     }
@@ -285,7 +284,12 @@ public class AuthorizationTokenService {
             RootAuthenticationSessionModel rootAuthSession = keycloakSession.authenticationSessions().getRootAuthenticationSession(realm, userSessionModel.getId());
 
             if (rootAuthSession == null) {
-                rootAuthSession = keycloakSession.authenticationSessions().createRootAuthenticationSession(userSessionModel.getId(), realm);
+                if (userSessionModel.getUser().getServiceAccountClientLink() == null) {
+                    rootAuthSession = keycloakSession.authenticationSessions().createRootAuthenticationSession(userSessionModel.getId(), realm);
+                } else {
+                    // if the user session is associated with a service account
+                    rootAuthSession = new AuthenticationSessionManager(keycloakSession).createAuthenticationSession(realm, false);
+                }
             }
 
             AuthenticationSessionModel authSession = rootAuthSession.createAuthenticationSession(targetClient);
@@ -297,7 +301,7 @@ public class AuthorizationTokenService {
             AuthenticationManager.setClientScopesInSession(authSession);
             clientSessionCtx = TokenManager.attachAuthenticationSession(keycloakSession, userSessionModel, authSession);
         } else {
-            clientSessionCtx = DefaultClientSessionContext.fromClientSessionScopeParameter(clientSession);
+            clientSessionCtx = DefaultClientSessionContext.fromClientSessionScopeParameter(clientSession, keycloakSession);
         }
 
         TokenManager tokenManager = request.getTokenManager();
@@ -461,7 +465,7 @@ public class AuthorizationTokenService {
                         requestedResources.add(ownerResource);
                     }
 
-                    if (!identity.isResourceServer()) {
+                    if (!identity.isResourceServer() || !identity.getId().equals(resourceServer.getId())) {
                         List<PermissionTicket> tickets = storeFactory.getPermissionTicketStore().findGranted(resourceName, identity.getId(), resourceServer.getId());
                         for (PermissionTicket permissionTicket : tickets) {
                             requestedResources.add(permissionTicket.getResource());

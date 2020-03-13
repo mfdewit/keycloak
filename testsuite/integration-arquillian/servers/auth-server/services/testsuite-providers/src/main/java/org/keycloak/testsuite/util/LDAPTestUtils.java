@@ -62,9 +62,7 @@ public class LDAPTestUtils {
         user.setEmail(email);
         user.setEnabled(true);
 
-        UserCredentialModel creds = new UserCredentialModel();
-        creds.setType(CredentialRepresentation.PASSWORD);
-        creds.setValue(password);
+        UserCredentialModel creds = UserCredentialModel.password(password);
 
         session.userCredentialManager().updateCredential(realm, user, creds);
         return user;
@@ -292,6 +290,13 @@ public class LDAPTestUtils {
         }
 
         return getGroupMapper(mapperModel, ldapProvider, appRealm).createLDAPGroup(groupName, additAttrs);
+    }
+
+    public static LDAPObject updateLDAPGroup(KeycloakSession session, RealmModel appRealm, ComponentModel ldapModel, LDAPObject ldapObject) {
+        ComponentModel mapperModel = getSubcomponentByName(appRealm, ldapModel, "groupsMapper");
+        LDAPStorageProvider ldapProvider = LDAPTestUtils.getLdapProvider(session, ldapModel);
+
+        return getGroupMapper(mapperModel, ldapProvider, appRealm).updateLDAPGroup(ldapObject);
     }
 
     public static GroupLDAPStorageMapper getGroupMapper(ComponentModel mapperModel, LDAPStorageProvider ldapProvider, RealmModel realm) {
