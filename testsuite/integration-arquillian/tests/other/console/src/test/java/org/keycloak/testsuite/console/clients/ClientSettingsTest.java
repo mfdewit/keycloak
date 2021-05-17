@@ -35,6 +35,7 @@ import static org.keycloak.testsuite.auth.page.login.Login.OIDC;
 import static org.keycloak.testsuite.auth.page.login.Login.SAML;
 import static org.keycloak.testsuite.console.page.clients.settings.ClientSettingsForm.OidcAccessType.BEARER_ONLY;
 import static org.keycloak.testsuite.console.page.clients.settings.ClientSettingsForm.OidcAccessType.CONFIDENTIAL;
+import static org.keycloak.testsuite.util.UIUtils.refreshPageAndWaitForLoad;
 import static org.keycloak.testsuite.util.WaitUtils.pause;
 
 /**
@@ -49,7 +50,7 @@ public class ClientSettingsTest extends AbstractClientTest {
     private ClientSettings clientSettingsPage;
 
     private ClientRepresentation newClient;
-    
+
     @Test
     public void crudOIDCPublic() {
         newClient = createClientRep("oidc-public", OIDC);
@@ -59,23 +60,22 @@ public class ClientSettingsTest extends AbstractClientTest {
         ClientRepresentation found = findClientByClientId(newClient.getClientId());
         assertNotNull("Client " + newClient.getClientId() + " was not found.", found);
         assertClientSettingsEqual(newClient, found);
-        
+
         // update & verify
         newClient.setClientId("oidc-public-updated");
         newClient.setName("updatedName");
-        
+
         List<String> redirectUris = new ArrayList<>();
         redirectUris.add("http://example2.test/app/*");
         redirectUris.add("http://example2.test/app2/*");
         redirectUris.add("http://example3.test/app/*");
         newClient.setRedirectUris(redirectUris);
-        
+
         List<String> webOrigins = new ArrayList<>();
-        webOrigins.clear();
         webOrigins.add("http://example2.test");
         webOrigins.add("http://example3.test");
         newClient.setWebOrigins(webOrigins);
-        
+
         clientSettingsPage.form().setClientId("oidc-public-updated");
         clientSettingsPage.form().setName("updatedName");
         clientSettingsPage.form().setRedirectUris(redirectUris);
@@ -84,7 +84,7 @@ public class ClientSettingsTest extends AbstractClientTest {
         assertAlertSuccess();
 
         assertFalse(clientSettingsPage.form().isAlwaysDisplayInConsoleVisible());
-        
+
         found = findClientByClientId(newClient.getClientId());
         assertNotNull("Client " + newClient.getClientId() + " was not found.", found);
         assertClientSettingsEqual(newClient, found);
@@ -99,6 +99,8 @@ public class ClientSettingsTest extends AbstractClientTest {
     @Test
     @EnableFeature(value = Profile.Feature.ACCOUNT2, skipRestart = true)
     public void alwaysDisplayInAccountConsole() {
+        refreshPageAndWaitForLoad();
+
         newClient = createClientRep("always-display-in-console", OIDC);
         createClient(newClient);
 
@@ -128,10 +130,10 @@ public class ClientSettingsTest extends AbstractClientTest {
     public void createOIDCConfidential() {
         newClient = createClientRep("oidc-confidetial", OIDC);
         createClient(newClient);
-        
+
         newClient.setRedirectUris(TEST_REDIRECT_URIs);
         newClient.setPublicClient(false);
-        
+
         clientSettingsPage.form().setAccessType(CONFIDENTIAL);
         clientSettingsPage.form().setRedirectUris(TEST_REDIRECT_URIs);
         clientSettingsPage.form().save();
@@ -140,29 +142,29 @@ public class ClientSettingsTest extends AbstractClientTest {
         assertNotNull("Client " + newClient.getClientId() + " was not found.", found);
         assertClientSettingsEqual(newClient, found);
     }
-    
+
     //KEYCLOAK-4022
     @Test
     public void testOIDCConfidentialServiceAccountRolesTab() {
         newClient = createClientRep("oidc-service-account-tab", OIDC);
         createClient(newClient);
-        
+
         newClient.setRedirectUris(TEST_REDIRECT_URIs);
         newClient.setPublicClient(false);
-        
+
         clientSettingsPage.form().setAccessType(CONFIDENTIAL);
         clientSettingsPage.form().setServiceAccountsEnabled(true);
         assertTrue(clientSettingsPage.form().isServiceAccountsEnabled());
         //check if Service Account Roles tab is not present
         assertFalse(clientSettingsPage.tabs().isServiceAccountRolesDisplayed());
-        
+
         clientSettingsPage.form().setRedirectUris(TEST_REDIRECT_URIs);
         clientSettingsPage.form().save();
-        
+
         //should be there now
         assertTrue(clientSettingsPage.tabs().getTabs().findElement(By.linkText("Service Account Roles")).isDisplayed());
     }
-    
+
     @Test
     public void saveOIDCConfidentialWithoutRedirectURIs() {
         newClient = createClientRep("oidc-confidential", OIDC);
@@ -180,10 +182,10 @@ public class ClientSettingsTest extends AbstractClientTest {
 
         clientSettingsPage.form().setAccessType(BEARER_ONLY);
         clientSettingsPage.form().save();
-        
+
         newClient.setBearerOnly(true);
         newClient.setPublicClient(false);
-        
+
         ClientRepresentation found = findClientByClientId(newClient.getClientId());
         assertNotNull("Client " + newClient.getClientId() + " was not found.", found);
         assertClientSettingsEqual(newClient, found);
@@ -199,7 +201,7 @@ public class ClientSettingsTest extends AbstractClientTest {
         assertClientSettingsEqual(newClient, found);
         assertClientSamlAttributes(getSAMLAttributes(), found.getAttributes());
     }
-    
+
     @Test
     public void invalidSettings() {
         clientsPage.table().createClient();

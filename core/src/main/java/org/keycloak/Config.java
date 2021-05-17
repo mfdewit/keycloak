@@ -75,7 +75,7 @@ public class Config {
 
     public static class SystemPropertiesScope implements Scope {
 
-        private String prefix;
+        protected String prefix;
 
         public SystemPropertiesScope(String prefix) {
             this.prefix = prefix;
@@ -88,7 +88,8 @@ public class Config {
 
         @Override
         public String get(String key, String defaultValue) {
-            return System.getProperty(prefix + key, defaultValue);
+            String v = System.getProperty(prefix + key, defaultValue);
+            return v != null && !v.isEmpty() ? v : null;
         }
 
         @Override
@@ -113,7 +114,7 @@ public class Config {
         @Override
         public Integer getInt(String key, Integer defaultValue) {
             String v = get(key, null);
-            return v != null ? Integer.parseInt(v) : defaultValue;
+            return v != null ? Integer.valueOf(v) : defaultValue;
         }
 
         @Override
@@ -124,7 +125,7 @@ public class Config {
         @Override
         public Long getLong(String key, Long defaultValue) {
             String v = get(key, null);
-            return v != null ? Long.parseLong(v) : defaultValue;
+            return v != null ? Long.valueOf(v) : defaultValue;
         }
 
         @Override
@@ -136,7 +137,7 @@ public class Config {
         public Boolean getBoolean(String key, Boolean defaultValue) {
             String v = get(key, null);
             if (v != null) {
-                return Boolean.parseBoolean(v);
+                return Boolean.valueOf(v);
             } else {
                 return defaultValue;
             }

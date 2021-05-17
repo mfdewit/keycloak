@@ -39,11 +39,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import javax.ws.rs.ClientErrorException;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import org.keycloak.testsuite.util.RoleBuilder;
 
 /**
  * @author Stan Silvert ssilvert@redhat.com (C) 2016 Red Hat Inc.
@@ -83,9 +85,22 @@ public class ClientRolesTest extends AbstractClientTest {
     @Test
     public void testAddRole() {
         RoleRepresentation role1 = makeRole("role1");
+        role1.setDescription("role1-description");
+        role1.setAttributes(Collections.singletonMap("role1-attr-key", Collections.singletonList("role1-attr-val")));
         rolesRsc.create(role1);
         assertAdminEvents.assertEvent(getRealmId(), OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientDbId, "role1"), role1, ResourceType.CLIENT_ROLE);
-        assertTrue(hasRole(rolesRsc, "role1"));
+
+        RoleRepresentation addedRole = rolesRsc.get(role1.getName()).toRepresentation();
+        assertEquals(role1.getName(), addedRole.getName());
+        assertEquals(role1.getDescription(), addedRole.getDescription());
+        assertEquals(role1.getAttributes(), addedRole.getAttributes());
+    }
+
+    @Test(expected = ClientErrorException.class)
+    public void createRoleWithSameName() {
+        RoleRepresentation role = RoleBuilder.create().name("role-a").build();
+        rolesRsc.create(role);
+        rolesRsc.create(role);
     }
 
     @Test
@@ -270,14 +285,6 @@ public class ClientRolesTest extends AbstractClientTest {
                     
             rolesRsc.create(role);
             assertAdminEvents.assertEvent(getRealmId(), OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientDbId,roleName), role, ResourceType.CLIENT_ROLE);  
-            
-            // we have to update the role to set the attributes because
-            // the add role endpoint only care about name and description
-            RoleResource roleToUpdate = rolesRsc.get(roleName);
-            role.setId(roleToUpdate.toRepresentation().getId());
-            
-            roleToUpdate.update(role);
-            assertAdminEvents.assertEvent(getRealmId(), OperationType.UPDATE, AdminEventPaths.clientRoleResourcePath(clientDbId,roleName), role, ResourceType.CLIENT_ROLE);  
         }
         
         List<RoleRepresentation> roles = rolesRsc.list(false);
@@ -295,15 +302,7 @@ public class ClientRolesTest extends AbstractClientTest {
             role.setAttributes(attributes);
                     
             rolesRsc.create(role);
-            assertAdminEvents.assertEvent(getRealmId(), OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientDbId,roleName), role, ResourceType.CLIENT_ROLE);  
-            
-            // we have to update the role to set the attributes because
-            // the add role endpoint only care about name and description
-            RoleResource roleToUpdate = rolesRsc.get(roleName);
-            role.setId(roleToUpdate.toRepresentation().getId());
-            
-            roleToUpdate.update(role);
-            assertAdminEvents.assertEvent(getRealmId(), OperationType.UPDATE, AdminEventPaths.clientRoleResourcePath(clientDbId,roleName), role, ResourceType.CLIENT_ROLE);         
+            assertAdminEvents.assertEvent(getRealmId(), OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientDbId,roleName), role, ResourceType.CLIENT_ROLE);
         }
         
         List<RoleRepresentation> roles = rolesRsc.list();

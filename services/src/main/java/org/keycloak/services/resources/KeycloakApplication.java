@@ -22,7 +22,6 @@ import org.keycloak.Config;
 import org.keycloak.common.util.Resteasy;
 import org.keycloak.config.ConfigProviderFactory;
 import org.keycloak.exportimport.ExportImportManager;
-import org.keycloak.migration.MigrationModelManager;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.KeycloakSessionTask;
@@ -30,8 +29,6 @@ import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
-import org.keycloak.models.dblock.DBLockManager;
-import org.keycloak.models.dblock.DBLockProvider;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.PostMigrationEvent;
 import org.keycloak.models.utils.RepresentationToModel;
@@ -42,7 +39,7 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.services.DefaultKeycloakSessionFactory;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.error.KeycloakErrorHandler;
-import org.keycloak.services.filters.KeycloakTransactionCommitter;
+import org.keycloak.services.filters.KeycloakSecurityHeadersFilter;
 import org.keycloak.services.managers.ApplianceBootstrap;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.services.managers.UserStorageSyncManager;
@@ -57,10 +54,10 @@ import org.keycloak.timer.TimerProvider;
 import org.keycloak.transaction.JtaTransactionManagerLookup;
 import org.keycloak.util.JsonSerialization;
 
-import javax.servlet.ServletContext;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
 import javax.ws.rs.core.Application;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -86,10 +83,10 @@ public class KeycloakApplication extends Application {
 
     protected final PlatformProvider platform = Platform.getPlatform();
 
-    protected Set<Object> singletons = new HashSet<Object>();
-    protected Set<Class<?>> classes = new HashSet<Class<?>>();
+    protected Set<Object> singletons = new HashSet<>();
+    protected Set<Class<?>> classes = new HashSet<>();
 
-    protected KeycloakSessionFactory sessionFactory;
+    protected static KeycloakSessionFactory sessionFactory;
 
     public KeycloakApplication() {
 
@@ -98,15 +95,7 @@ public class KeycloakApplication extends Application {
             logger.debugv("PlatformProvider: {0}", platform.getClass().getName());
             logger.debugv("RestEasy provider: {0}", Resteasy.getProvider().getClass().getName());
 
-            ServletContext context = Resteasy.getContextData(ServletContext.class);
-
             loadConfig();
-
-            this.sessionFactory = createSessionFactory();
-
-            Resteasy.pushDefaultContextObject(KeycloakApplication.class, this);
-            Resteasy.pushContext(KeycloakApplication.class, this); // for injection
-            context.setAttribute(KeycloakSessionFactory.class.getName(), this.sessionFactory);
 
             singletons.add(new RobotsResource());
             singletons.add(new RealmsResource());
@@ -114,10 +103,10 @@ public class KeycloakApplication extends Application {
             classes.add(ThemeResource.class);
             classes.add(JsResource.class);
 
-            classes.add(KeycloakTransactionCommitter.class);
+            classes.add(KeycloakSecurityHeadersFilter.class);
             classes.add(KeycloakErrorHandler.class);
 
-            singletons.add(new ObjectMapperResolver(Boolean.parseBoolean(System.getProperty("keycloak.jsonPrettyPrint", "false"))));
+            singletons.add(new ObjectMapperResolver());
             singletons.add(new WelcomeResource());
 
             platform.onStartup(this::startup);
@@ -130,29 +119,12 @@ public class KeycloakApplication extends Application {
     }
 
     protected void startup() {
+        this.sessionFactory = createSessionFactory();
 
-        ExportImportManager[] exportImportManager = new ExportImportManager[1];
+        ExportImportManager exportImportManager = bootstrap();
 
-        KeycloakModelUtils.runJobInTransaction(sessionFactory, new KeycloakSessionTask() {
-
-            @Override
-            public void run(KeycloakSession lockSession) {
-                DBLockManager dbLockManager = new DBLockManager(lockSession);
-                dbLockManager.checkForcedUnlock();
-                DBLockProvider dbLock = dbLockManager.getDBLock();
-                dbLock.waitForLock(DBLockProvider.Namespace.KEYCLOAK_BOOT);
-                try {
-                    exportImportManager[0] = migrateAndBootstrap();
-                } finally {
-                    dbLock.releaseLock();
-                }
-            }
-
-        });
-
-
-        if (exportImportManager[0].isRunExport()) {
-            exportImportManager[0].runExport();
+        if (exportImportManager.isRunExport()) {
+            exportImportManager.runExport();
         }
 
         KeycloakModelUtils.runJobInTransaction(sessionFactory, new KeycloakSessionTask() {
@@ -168,7 +140,6 @@ public class KeycloakApplication extends Application {
         sessionFactory.publish(new PostMigrationEvent());
 
         setupScheduledTasks(sessionFactory);
-
     }
 
     protected void shutdown() {
@@ -176,77 +147,54 @@ public class KeycloakApplication extends Application {
             sessionFactory.close();
     }
 
-    // Migrate model, bootstrap master realm, import realms and create admin user. This is done with acquired dbLock
-    protected ExportImportManager migrateAndBootstrap() {
-        ExportImportManager exportImportManager;
-        logger.debug("Calling migrateModel");
-        migrateModel();
+    // Bootstrap master realm, import realms and create admin user.
+    protected ExportImportManager bootstrap() {
+        ExportImportManager[] exportImportManager = new ExportImportManager[1];
 
         logger.debug("bootstrap");
-        KeycloakSession session = sessionFactory.create();
-        try {
-            session.getTransactionManager().begin();
-            JtaTransactionManagerLookup lookup = (JtaTransactionManagerLookup) sessionFactory.getProviderFactory(JtaTransactionManagerLookup.class);
-            if (lookup != null) {
-                if (lookup.getTransactionManager() != null) {
-                    try {
-                        Transaction transaction = lookup.getTransactionManager().getTransaction();
-                        logger.debugv("bootstrap current transaction? {0}", transaction != null);
-                        if (transaction != null) {
-                            logger.debugv("bootstrap current transaction status? {0}", transaction.getStatus());
+        KeycloakModelUtils.runJobInTransaction(sessionFactory, new KeycloakSessionTask() {
+            @Override
+            public void run(KeycloakSession session) {
+                // TODO what is the purpose of following piece of code? Leaving it as is for now.
+                JtaTransactionManagerLookup lookup = (JtaTransactionManagerLookup) sessionFactory.getProviderFactory(JtaTransactionManagerLookup.class);
+                if (lookup != null) {
+                    if (lookup.getTransactionManager() != null) {
+                        try {
+                            Transaction transaction = lookup.getTransactionManager().getTransaction();
+                            logger.debugv("bootstrap current transaction? {0}", transaction != null);
+                            if (transaction != null) {
+                                logger.debugv("bootstrap current transaction status? {0}", transaction.getStatus());
+                            }
+                        } catch (SystemException e) {
+                            throw new RuntimeException(e);
                         }
-                    } catch (SystemException e) {
-                        throw new RuntimeException(e);
                     }
                 }
+                // TODO up here ^^
+
+                ApplianceBootstrap applianceBootstrap = new ApplianceBootstrap(session);
+                exportImportManager[0] = new ExportImportManager(session);
+
+                boolean createMasterRealm = applianceBootstrap.isNewInstall();
+                if (exportImportManager[0].isRunImport() && exportImportManager[0].isImportMasterIncluded()) {
+                    createMasterRealm = false;
+                }
+
+                if (createMasterRealm) {
+                    applianceBootstrap.createMasterRealm();
+                }
             }
+        });
 
-
-            ApplianceBootstrap applianceBootstrap = new ApplianceBootstrap(session);
-            exportImportManager = new ExportImportManager(session);
-
-            boolean createMasterRealm = applianceBootstrap.isNewInstall();
-            if (exportImportManager.isRunImport() && exportImportManager.isImportMasterIncluded()) {
-                createMasterRealm = false;
-            }
-
-            if (createMasterRealm) {
-                applianceBootstrap.createMasterRealm();
-            }
-            session.getTransactionManager().commit();
-        } catch (RuntimeException re) {
-            if (session.getTransactionManager().isActive()) {
-                session.getTransactionManager().rollback();
-            }
-            throw re;
-        } finally {
-            session.close();
-        }
-
-        if (exportImportManager.isRunImport()) {
-            exportImportManager.runImport();
+        if (exportImportManager[0].isRunImport()) {
+            exportImportManager[0].runImport();
         } else {
             importRealms();
         }
 
         importAddUser();
 
-        return exportImportManager;
-    }
-
-
-    protected void migrateModel() {
-        KeycloakSession session = sessionFactory.create();
-        try {
-            session.getTransactionManager().begin();
-            MigrationModelManager.migrate(session);
-            session.getTransactionManager().commit();
-        } catch (Exception e) {
-            session.getTransactionManager().rollback();
-            throw e;
-        } finally {
-            session.close();
-        }
+        return exportImportManager[0];
     }
 
     protected void loadConfig() {
@@ -270,7 +218,7 @@ public class KeycloakApplication extends Application {
     }
 
     public static void setupScheduledTasks(final KeycloakSessionFactory sessionFactory) {
-        long interval = Config.scope("scheduled").getLong("interval", 60L) * 1000;
+        long interval = Config.scope("scheduled").getLong("interval", 900L) * 1000;
 
         KeycloakSession session = sessionFactory.create();
         try {
@@ -284,7 +232,7 @@ public class KeycloakApplication extends Application {
         }
     }
 
-    public KeycloakSessionFactory getSessionFactory() {
+    public static KeycloakSessionFactory getSessionFactory() {
         return sessionFactory;
     }
 
@@ -379,7 +327,7 @@ public class KeycloakApplication extends Application {
 
                             UserProvider users = session.users();
 
-                            if (users.getUserByUsername(userRep.getUsername(), realm) != null) {
+                            if (users.getUserByUsername(realm, userRep.getUsername()) != null) {
                                 ServicesLogger.LOGGER.notCreatingExistingUser(userRep.getUsername());
                             } else {
                                 UserModel user = users.addUser(realm, userRep.getUsername());

@@ -2,7 +2,7 @@
 
 var module = angular.module('keycloak.services', [ 'ngResource', 'ngRoute' ]);
 
-module.service('Dialog', function($modal) {
+module.service('Dialog', function($modal, $translate) {
     var dialog = {};
 
     var openDialog = function(title, message, btns, template) {
@@ -43,20 +43,11 @@ module.service('Dialog', function($modal) {
     };
 
     dialog.confirmDelete = function(name, type, success) {
-        var title = 'Delete ' + escapeHtml(type.charAt(0).toUpperCase() + type.slice(1));
-        var msg = 'Are you sure you want to permanently delete the ' + type + ' ' + name + '?';
-        var btns = {
-            ok: {
-                label: 'Delete',
-                cssClass: 'btn btn-danger'
-            },
-            cancel: {
-                label: 'Cancel',
-                cssClass: 'btn btn-default'
-            }
-        }
+        var title = $translate.instant('dialogs.delete.title', {type: escapeHtml(type.charAt(0).toUpperCase() + type.slice(1))});
+        var msg = $translate.instant('dialogs.delete.message', {type: type, name: name});
+        var confirm = $translate.instant('dialogs.delete.confirm');
 
-        openDialog(title, msg, btns, '/templates/kc-modal.html').then(success);
+        dialog.confirmWithButtonText(title, msg, confirm, success);
     }
 
     dialog.confirmGenerateKeys = function(name, type, success) {
@@ -77,13 +68,17 @@ module.service('Dialog', function($modal) {
     }
 
     dialog.confirm = function(title, message, success, cancel) {
+        dialog.confirmWithButtonText(title, message, title, success, cancel);
+    }
+
+    dialog.confirmWithButtonText = function(title, message, confirm, success, cancel) {
         var btns = {
             ok: {
-                label: title,
+                label: confirm,
                 cssClass: 'btn btn-danger'
             },
             cancel: {
-                label: 'Cancel',
+                label: $translate.instant('dialogs.cancel'),
                 cssClass: 'btn btn-default'
             }
         }
@@ -94,7 +89,7 @@ module.service('Dialog', function($modal) {
     dialog.message = function(title, message, success, cancel) {
         var btns = {
             ok: {
-                label: "Ok",
+                label: $translate.instant('dialogs.ok'),
                 cssClass: 'btn btn-default'
             }
         }
@@ -137,7 +132,36 @@ module.service('CopyDialog', function($modal) {
     return dialog;
 });
 
-module.factory('Notifications', function($rootScope, $timeout) {
+module.service('UpdateDialog', function($modal) {
+    var dialog = {};
+    dialog.open = function (title, name, desc, success) {
+        var controller = function($scope, $modalInstance, title) {
+            $scope.title = title;
+            $scope.name = { value: name };
+            $scope.description = { value: desc };
+            $scope.ok = function () {
+                console.log('ok with name: ' + $scope.name + 'and description: ' + $scope.description);
+                $modalInstance.close();
+                success($scope.name.value, $scope.description.value);
+            };
+            $scope.cancel = function () {
+                $modalInstance.dismiss('cancel');
+            };
+        }
+        $modal.open({
+            templateUrl: resourceUrl + '/templates/kc-edit.html',
+            controller: controller,
+            resolve: {
+                title: function() {
+                    return title;
+                }
+            }
+        });
+    };
+    return dialog;
+});
+
+module.factory('Notifications', function($rootScope, $timeout, $translate) {
     // time (in ms) the notifications are shown
     var delay = 5000;
 
@@ -173,19 +197,19 @@ module.factory('Notifications', function($rootScope, $timeout) {
     }
 
     notifications.info = function(message) {
-        notifications.message("info", "Info!", message);
+        notifications.message("info", $translate.instant('notifications.info.header'), message);
     };
 
     notifications.success = function(message) {
-        notifications.message("success", "Success!", message);
+        notifications.message("success", $translate.instant('notifications.success.header'), message);
     };
 
     notifications.error = function(message) {
-        notifications.message("danger", "Error!", message);
+        notifications.message("danger", $translate.instant('notifications.error.header'), message);
     };
 
     notifications.warn = function(message) {
-        notifications.message("warning", "Warning!", message);
+        notifications.message("warning", $translate.instant('notifications.warn.header'), message);
     };
 
     return notifications;
@@ -350,6 +374,41 @@ module.factory('Realm', function($resource) {
 module.factory('RealmKeys', function($resource) {
     return $resource(authUrl + '/admin/realms/:id/keys', {
         id : '@realm'
+    });
+});
+
+module.factory('RealmSpecificLocales', function($resource) {
+    return $resource(authUrl + '/admin/realms/:id/localization', {
+        id : '@realm'
+    },{'get':  {method:'GET', isArray:true}});
+});
+
+module.factory('RealmSpecificLocalizationTexts', function($resource) {
+    return $resource(authUrl + '/admin/realms/:id/localization/:locale', {
+        id : '@realm',
+        locale : '@locale'
+    });
+});
+
+module.factory('RealmSpecificLocalizationText', function ($resource) {
+    return $resource(authUrl + '/admin/realms/:realm/localization/:locale/:key', {
+        realm: '@realm',
+        locale: '@locale',
+        key: '@key'
+    }, {
+        // wrap plain text response as AngularJS $resource will convert it into a char array otherwise.
+        get: {
+            method: 'GET',
+            transformResponse: function (data) {
+                return {content: data};
+            }
+        },
+        save: {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8'
+            }
+        }
     });
 });
 
@@ -886,15 +945,11 @@ module.factory('RoleClientComposites', function($resource) {
 
 function clientSelectControl($scope, realm, Client) {
     $scope.clientsUiSelect = {
-        minimumInputLength: 1,
+        minimumInputLength: 0,
         delay: 500,
         allowClear: true,
         query: function (query) {
             var data = {results: []};
-            if ('' == query.term.trim()) {
-                query.callback(data);
-                return;
-            }
             Client.query({realm: realm, search: true, clientId: query.term.trim(), max: 20}, function(response) {
                 data.results = response;
                 query.callback(data);
@@ -1184,19 +1239,30 @@ module.factory('ClientEvaluateNotGrantedRoles', function($resource) {
     });
 });
 
-module.factory('ClientEvaluateGenerateExampleToken', function($resource) {
-    var url = authUrl + '/admin/realms/:realm/clients/:client/evaluate-scopes/generate-example-access-token?scope=:scopeParam&userId=:userId';
+module.factory('ClientEvaluateGenerateExampleAccessToken', function($resource) {
+    return buildClientEvaluateGenerateExampleUrl('generate-example-access-token');
+});
+
+module.factory('ClientEvaluateGenerateExampleIDToken', function($resource) {
+    return buildClientEvaluateGenerateExampleUrl('generate-example-id-token');
+});
+
+module.factory('ClientEvaluateGenerateExampleUserInfo', function($resource) {
+    return buildClientEvaluateGenerateExampleUrl('generate-example-userinfo');
+});
+
+function buildClientEvaluateGenerateExampleUrl(subPath) {
+    var urlTemplate = authUrl + '/admin/realms/:realm/clients/:client/evaluate-scopes/' + subPath + '?scope=:scopeParam&userId=:userId';
     return {
-        url : function(parameters)
-        {
-            return url
+        url: function (parameters) {
+            return urlTemplate
                 .replace(':realm', parameters.realm)
                 .replace(':client', parameters.client)
                 .replace(':scopeParam', parameters.scopeParam)
                 .replace(':userId', parameters.userId);
         }
     }
-});
+}
 
 module.factory('ClientProtocolMappersByProtocol', function($resource) {
     return $resource(authUrl + '/admin/realms/:realm/clients/:client/protocol-mappers/protocol/:protocol', {
@@ -1745,6 +1811,19 @@ module.factory('AuthenticationFlowsCopy', function($resource) {
         alias : '@alias'
     });
 });
+
+module.factory('AuthenticationFlowsUpdate', function($resource) {
+    return $resource(authUrl + '/admin/realms/:realm/authentication/flows/:flow', {
+        realm : '@realm',
+        flow : '@flow'
+    }, {
+        update : {
+          method : 'PUT'
+        }
+    });
+});
+
+
 module.factory('AuthenticationConfigDescription', function($resource) {
     return $resource(authUrl + '/admin/realms/:realm/authentication/config-description/:provider', {
         realm : '@realm',
@@ -2116,6 +2195,27 @@ module.factory('ClientStorageOperations', function($resource) {
 module.factory('ClientRegistrationPolicyProviders', function($resource) {
     return $resource(authUrl + '/admin/realms/:realm/client-registration-policy/providers', {
         realm : '@realm',
+    });
+});
+
+module.factory('ClientPoliciesProfiles', function($resource) {
+    return $resource(authUrl + '/admin/realms/:realm/client-policies/profiles?include-global-profiles=:includeGlobalProfiles', {
+        realm : '@realm',
+        includeGlobalProfiles : '@includeGlobalProfiles'
+    }, {
+       update : {
+           method : 'PUT'
+       }
+    });
+});
+
+module.factory('ClientPolicies', function($resource) {
+    return $resource(authUrl + '/admin/realms/:realm/client-policies/policies', {
+        realm : '@realm',
+    }, {
+       update : {
+           method : 'PUT'
+       }
     });
 });
 

@@ -25,8 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLSession;
 import javax.ws.rs.core.Response;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
@@ -36,23 +34,25 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.protocol.HttpClientContext;
 import org.apache.http.client.utils.URLEncodedUtils;
-import org.apache.http.conn.ssl.TrustSelfSignedStrategy;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.LaxRedirectStrategy;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
-import org.jboss.resteasy.client.jaxrs.ResteasyClientBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Element;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.keycloak.Config;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.ClientsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.jose.jws.JWSInput;
+import org.keycloak.models.UserSessionSpi;
+import org.keycloak.models.sessions.infinispan.InfinispanUserSessionProviderFactory;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ClientRepresentation;
@@ -72,7 +72,7 @@ import org.hamcrest.Matchers;
 import org.keycloak.util.JsonSerialization;
 
 import static org.hamcrest.Matchers.containsString;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_SSL_REQUIRED;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SSL_REQUIRED;
 /**
  * @author <a href="mailto:vramik@redhat.com">Vlastislav Ramik</a>
  */
@@ -82,8 +82,11 @@ public class ConcurrentLoginTest extends AbstractConcurrencyTest {
     protected static final int CLIENTS_PER_THREAD = 30;
     protected static final int DEFAULT_CLIENTS_COUNT = CLIENTS_PER_THREAD * DEFAULT_THREADS;
 
+    private String userSessionProvider;
+
     @Before
     public void beforeTest() {
+        userSessionProvider = testingClient.server().fetch(session -> Config.getProvider(UserSessionSpi.NAME), String.class);
         createClients();
     }
 
@@ -109,6 +112,10 @@ public class ConcurrentLoginTest extends AbstractConcurrencyTest {
 
     @Test
     public void concurrentLoginSingleUser() throws Throwable {
+        Assume.assumeThat("Test runs only with InfinispanUserSessionProvider",
+                userSessionProvider,
+                Matchers.is(InfinispanUserSessionProviderFactory.PROVIDER_ID));
+
         log.info("*********************************************");
         long start = System.currentTimeMillis();
 
@@ -173,6 +180,10 @@ public class ConcurrentLoginTest extends AbstractConcurrencyTest {
 
     @Test
     public void concurrentLoginMultipleUsers() throws Throwable {
+        Assume.assumeThat("Test runs only with InfinispanUserSessionProvider",
+                userSessionProvider,
+                Matchers.is(InfinispanUserSessionProviderFactory.PROVIDER_ID));
+
         log.info("*********************************************");
         long start = System.currentTimeMillis();
 

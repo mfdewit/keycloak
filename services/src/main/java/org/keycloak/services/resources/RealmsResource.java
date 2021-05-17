@@ -19,10 +19,10 @@ package org.keycloak.services.resources;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.spi.HttpRequest;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.keycloak.OAuthErrorException;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.AuthorizationService;
 import org.keycloak.common.ClientConnection;
-import org.keycloak.common.Profile;
 import org.keycloak.common.util.KeycloakUriBuilder;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.models.ClientModel;
@@ -30,14 +30,13 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.protocol.LoginProtocol;
 import org.keycloak.protocol.LoginProtocolFactory;
+import org.keycloak.services.CorsErrorResponseException;
 import org.keycloak.services.clientregistration.ClientRegistrationService;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.resources.account.AccountLoader;
 import org.keycloak.services.util.CacheControlUtil;
 import org.keycloak.services.util.ResolveRelative;
-import org.keycloak.utils.MediaTypeMatcher;
-import org.keycloak.utils.ProfileHelper;
 import org.keycloak.wellknown.WellKnownProvider;
 
 import javax.ws.rs.GET;
@@ -46,6 +45,7 @@ import javax.ws.rs.OPTIONS;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
@@ -207,7 +207,9 @@ public class RealmsResource {
     public Object getAccountService(final @PathParam("realm") String name) {
         RealmModel realm = init(name);
         EventBuilder event = new EventBuilder(realm, session, clientConnection);
-        return new AccountLoader().getAccountService(session, event);
+        AccountLoader accountLoader = new AccountLoader(session, event);
+        ResteasyProviderFactory.getInstance().injectProperties(accountLoader);
+        return accountLoader;
     }
 
     @Path("{realm}")
@@ -243,7 +245,8 @@ public class RealmsResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getWellKnown(final @PathParam("realm") String name,
                                  final @PathParam("provider") String providerName) {
-        init(name);
+        RealmModel realm = init(name);
+        checkSsl(realm);
 
         WellKnownProvider wellKnown = session.getProvider(WellKnownProvider.class, providerName);
 
@@ -274,9 +277,9 @@ public class RealmsResource {
      */
     @Path("{realm}/{extension}")
     public Object resolveRealmExtension(@PathParam("realm") String realmName, @PathParam("extension") String extension) {
+        init(realmName);
         RealmResourceProvider provider = session.getProvider(RealmResourceProvider.class, extension);
         if (provider != null) {
-            init(realmName);
             Object resource = provider.getResource();
             if (resource != null) {
                 return resource;
@@ -284,5 +287,14 @@ public class RealmsResource {
         }
 
         throw new NotFoundException();
+    }
+
+    private void checkSsl(RealmModel realm) {
+        if (!session.getContext().getUri().getBaseUri().getScheme().equals("https")
+                && realm.getSslRequired().isRequired(clientConnection)) {
+            Cors cors = Cors.add(request).auth().allowedMethods(request.getHttpMethod()).auth().exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS);
+            throw new CorsErrorResponseException(cors.allowAllOrigins(), OAuthErrorException.INVALID_REQUEST, "HTTPS required",
+                    Response.Status.FORBIDDEN);
+        }
     }
 }

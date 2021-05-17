@@ -20,6 +20,7 @@ package org.keycloak.models.jpa.session;
 import org.keycloak.Config;
 import org.keycloak.connections.jpa.JpaConnectionProvider;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.session.UserSessionPersisterProvider;
 import org.keycloak.models.session.UserSessionPersisterProviderFactory;
 
@@ -44,6 +45,11 @@ public class JpaUserSessionPersisterProviderFactory implements UserSessionPersis
     }
 
     @Override
+    public void postInit(KeycloakSessionFactory factory) {
+
+    }
+
+    @Override
     public void close() {
 
     }
@@ -51,5 +57,10 @@ public class JpaUserSessionPersisterProviderFactory implements UserSessionPersis
     @Override
     public String getId() {
         return ID;
+    }
+
+    @Override
+    public int order() {
+        return 100;
     }
 }

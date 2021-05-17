@@ -18,12 +18,14 @@
 package org.keycloak.admin.client.resource;
 
 import org.jboss.resteasy.annotations.cache.NoCache;
+import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.representations.adapters.action.GlobalRequestResult;
 import org.keycloak.representations.idm.AdminEventRepresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
+import org.keycloak.representations.idm.LDAPCapabilityRepresentation;
 import org.keycloak.representations.idm.PartialImportRepresentation;
 import org.keycloak.representations.idm.RealmEventsConfigRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
@@ -222,6 +224,13 @@ public interface RealmResource {
     @NoCache
     Response testLDAPConnection(TestLdapConnectionRepresentation config);
 
+    @POST
+    @Path("ldap-server-capabilities")
+    @NoCache
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(javax.ws.rs.core.MediaType.APPLICATION_JSON)
+    List<LDAPCapabilityRepresentation> ldapServerCapabilities(TestLdapConnectionRepresentation config);
+
     @Path("testSMTPConnection")
     @POST
     @NoCache
@@ -271,4 +280,12 @@ public interface RealmResource {
     @Path("keys")
     KeyResource keys();
 
+    @Path("localization")
+    RealmLocalizationResource localization();
+
+    @Path("client-policies/policies")
+    ClientPoliciesPoliciesResource clientPoliciesPoliciesResource();
+
+    @Path("client-policies/profiles")
+    ClientPoliciesProfilesResource clientPoliciesProfilesResource();
 }

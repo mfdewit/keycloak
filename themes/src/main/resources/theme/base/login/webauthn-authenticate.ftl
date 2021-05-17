@@ -25,7 +25,7 @@
         </form>
     </#if>
 
-    <script type="text/javascript" src="${url.resourcesPath}/node_modules/jquery/dist/jquery.min.js"></script>
+    <script type="text/javascript" src="${url.resourcesCommonPath}/node_modules/jquery/dist/jquery.min.js"></script>
     <script type="text/javascript" src="${url.resourcesPath}/js/base64url.js"></script>
     <script type="text/javascript">
 
@@ -62,6 +62,14 @@
 
 
     function doAuthenticate(allowCredentials) {
+
+        // Check if WebAuthn is supported by this browser
+        if (!window.PublicKeyCredential) {
+            $("#error").val("${msg("webauthn-unsupported-browser-text")?no_esc}");
+            $("#webauth").submit();
+            return;
+        }
+
         let challenge = "${challenge}";
         let userVerification = "${userVerification}";
         let rpId = "${rpId}";

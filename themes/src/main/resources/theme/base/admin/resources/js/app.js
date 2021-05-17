@@ -7,6 +7,8 @@ var locale = 'en';
 var module = angular.module('keycloak', [ 'keycloak.services', 'keycloak.loaders', 'ui.bootstrap', 'ui.select2', 'angularFileUpload', 'angularTreeview', 'pascalprecht.translate', 'ngCookies', 'ngSanitize', 'ui.ace']);
 var resourceRequests = 0;
 var loadingTimer = -1;
+var translateProvider = null;
+var currentRealm = null;
 
 angular.element(document).ready(function () {
     var keycloakAuth = new Keycloak(consoleBaseUrl + 'config');
@@ -50,6 +52,28 @@ angular.element(document).ready(function () {
         req.send();
     }
 
+    function loadSelect2Localization() {
+        // 'en' is the built-in default and does not have to be loaded.
+        var supportedLocales = ['ar', 'az', 'bg', 'ca', 'cs', 'da', 'de', 'el', 'es', 'et', 'eu', 'fa', 'fi', 'fr',
+            'gl', 'he', 'hr', 'hu', 'id', 'is', 'it', 'ja', 'ka', 'ko', 'lt', 'lv', 'mk', 'ms', 'nl', 'no', 'pl',
+            'pt-BR', 'pt-PT', 'ro', 'rs', 'ru', 'sk', 'sv', 'th', 'tr', 'ug-CN', 'uk', 'vi', 'zh-CN', 'zh-TW'];
+        if (supportedLocales.indexOf(locale) == -1) return;
+        var select2JsUrl;
+        var allScriptElements = document.getElementsByTagName('script');
+        for (var i = 0, n = allScriptElements.length; i < n; i++) {
+            var src = allScriptElements[i].getAttribute('src');
+            if (src && src.match(/\/select2\/select2\.js$/)) {
+                select2JsUrl = src;
+                break;
+            }
+        }
+        if (!select2JsUrl) return;
+        var scriptElement = document.createElement('script');
+        scriptElement.src = select2JsUrl.replace(/\/select2\/select2\.js$/, '/select2/select2_locale_'+locale+'.js');
+        scriptElement.type = 'text/javascript';
+        document.getElementsByTagName('head')[0].appendChild(scriptElement);
+    }
+
     function hasAnyAccess(user) {
         return user && user['realm_access'];
     }
@@ -58,32 +82,34 @@ angular.element(document).ready(function () {
         location.reload();
     }
 
-    keycloakAuth.init({ onLoad: 'login-required', pkceMethod: 'S256' }).success(function () {
+    auth.refreshPermissions = function(success, error) {
+        whoAmI(function(data) {
+            auth.user = data;
+            auth.loggedIn = true;
+            auth.hasAnyAccess = hasAnyAccess(data);
+
+            success();
+        }, function() {
+            error();
+        });
+    };
+
+    module.factory('Auth', function () {
+        return auth;
+    });
+
+    keycloakAuth.init({ onLoad: 'login-required', pkceMethod: 'S256' }).then(function () {
         auth.authz = keycloakAuth;
 
-        if (auth.authz.idTokenParsed.locale) {
-            locale = auth.authz.idTokenParsed.locale;
-        }
+        whoAmI(function(data) {
+            auth.user = data;
+            auth.loggedIn = true;
+            auth.hasAnyAccess = hasAnyAccess(data);
+            locale = auth.user.locale || locale;
 
-        auth.refreshPermissions = function(success, error) {
-            whoAmI(function(data) {
-                auth.user = data;
-                auth.loggedIn = true;
-                auth.hasAnyAccess = hasAnyAccess(data);
+            loadResourceBundle(function(data) {
+                resourceBundle = data;
 
-                success();
-            }, function() {
-                error();
-            });
-        };
-
-        loadResourceBundle(function(data) {
-            resourceBundle = data;
-
-            auth.refreshPermissions(function () {
-                module.factory('Auth', function () {
-                    return auth;
-                });
                 var injector = angular.bootstrap(document, ["keycloak"]);
 
                 injector.get('$translate')('consoleTitle').then(function (consoleTitle) {
@@ -91,7 +117,9 @@ angular.element(document).ready(function () {
                 });
             });
         });
-    }).error(function () {
+
+        loadSelect2Localization();
+    }).catch(function () {
         window.location.reload();
     });
 });
@@ -102,12 +130,12 @@ module.factory('authInterceptor', function($q, Auth) {
             if (!config.url.match(/.html$/)) {
                 var deferred = $q.defer();
                 if (Auth.authz.token) {
-                    Auth.authz.updateToken(5).success(function () {
+                    Auth.authz.updateToken(5).then(function () {
                         config.headers = config.headers || {};
                         config.headers.Authorization = 'Bearer ' + Auth.authz.token;
 
                         deferred.resolve(config);
-                    }).error(function () {
+                    }).catch(function () {
                         location.reload();
                     });
                 }
@@ -120,6 +148,7 @@ module.factory('authInterceptor', function($q, Auth) {
 });
 
 module.config(['$translateProvider', function($translateProvider) {
+    translateProvider = $translateProvider;
     $translateProvider.useSanitizeValueStrategy('sanitizeParameters');
     $translateProvider.preferredLanguage(locale);
     $translateProvider.translations(locale, resourceBundle);
@@ -151,6 +180,33 @@ module.config([ '$routeProvider', function($routeProvider) {
                 }
             },
             controller : 'RealmDetailCtrl'
+        })
+        .when('/realms/:realm/localization', {
+            templateUrl : resourceUrl + '/partials/realm-localization.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                },
+                realmSpecificLocales : function(RealmSpecificLocalesLoader) {
+                    return RealmSpecificLocalesLoader();
+                }
+            },
+            controller : 'RealmLocalizationCtrl'
+        })
+        .when('/realms/:realm/localization/upload', {
+            templateUrl : resourceUrl + '/partials/realm-localization-upload.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'RealmLocalizationUploadCtrl'
         })
         .when('/realms/:realm/login-settings', {
             templateUrl : resourceUrl + '/partials/realm-login-settings.html',
@@ -273,6 +329,168 @@ module.config([ '$routeProvider', function($routeProvider) {
                 }
             },
             controller : 'ClientRegPolicyDetailCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-list.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
+                },
+            },
+            controller : 'ClientPoliciesProfilesListCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles-json', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-json.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('false');
+                }
+            },
+            controller : 'ClientPoliciesProfilesJsonCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles-create', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-edit.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('false');
+                }
+            },
+            controller : 'ClientPoliciesProfilesEditCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles-update/:profileName', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-edit.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
+                }
+            },
+            controller : 'ClientPoliciesProfilesEditCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles-update/:profileName/create-executor', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-edit-executor.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('false');
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'ClientPoliciesProfilesEditExecutorCtrl'
+        })
+        .when('/realms/:realm/client-policies/profiles-update/:profileName/update-executor/:executorIndex', {
+            templateUrl : resourceUrl + '/partials/client-policies-profiles-edit-executor.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'ClientPoliciesProfilesEditExecutorCtrl'
+        })
+        .when('/realms/:realm/client-policies/policies', {
+            templateUrl : resourceUrl + '/partials/client-policies-list.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                }
+            },
+            controller : 'ClientPoliciesListCtrl'
+        })
+        .when('/realms/:realm/client-policies/policies-json', {
+            templateUrl : resourceUrl + '/partials/client-policies-json.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                }
+            },
+            controller : 'ClientPoliciesJsonCtrl'
+        })
+        .when('/realms/:realm/client-policies/policy-create', {
+            templateUrl : resourceUrl + '/partials/client-policies-policy-edit.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                }
+            },
+            controller : 'ClientPoliciesEditCtrl'
+        })
+        .when('/realms/:realm/client-policies/policies-update/:policyName', {
+            templateUrl : resourceUrl + '/partials/client-policies-policy-edit.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientProfiles : function(ClientPoliciesProfilesLoader) {
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                }
+            },
+            controller : 'ClientPoliciesEditCtrl'
+        })
+        .when('/realms/:realm/client-policies/policies-update/:policyName/create-condition', {
+            templateUrl : resourceUrl + '/partials/client-policies-policy-edit-condition.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'ClientPoliciesEditConditionCtrl'
+        })
+        .when('/realms/:realm/client-policies/policies-update/:policyName/update-condition/:conditionIndex', {
+            templateUrl : resourceUrl + '/partials/client-policies-policy-edit-condition.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientPolicies : function(ClientPoliciesLoader) {
+                    return ClientPoliciesLoader();
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'ClientPoliciesEditConditionCtrl'
         })
         .when('/realms/:realm/keys', {
             templateUrl : resourceUrl + '/partials/realm-keys.html',
@@ -2023,6 +2241,18 @@ module.config([ '$routeProvider', function($routeProvider) {
             },
             controller : 'RealmWebAuthnPasswordlessPolicyCtrl'
         })
+        .when('/realms/:realm/authentication/ciba-policy', {
+            templateUrl : resourceUrl + '/partials/ciba-policy.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                }
+            },
+            controller : 'RealmCibaPolicyCtrl'
+        })
         .when('/realms/:realm/authentication/flows/:flow/config/:provider/:config', {
             templateUrl : resourceUrl + '/partials/authenticator-config.html',
             resolve : {
@@ -2058,6 +2288,42 @@ module.config([ '$routeProvider', function($routeProvider) {
                 }
             },
             controller : 'AuthenticationConfigCreateCtrl'
+        })
+        .when('/create/localization/:realm/:locale', {
+            templateUrl : resourceUrl + '/partials/realm-localization-detail.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                locale: function($route) {
+                    return $route.current.params.locale;
+                },
+                key: function() {
+                    return null
+                },
+                localizationText : function() {
+                    return null;
+                }
+            },
+            controller : 'RealmLocalizationDetailCtrl'
+        })
+        .when('/realms/:realm/localization/:locale/:key', {
+            templateUrl : resourceUrl + '/partials/realm-localization-detail.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                locale: function($route) {
+                    return $route.current.params.locale;
+                },
+                key: function($route) {
+                    return $route.current.params.key;
+                },
+                localizationText : function(RealmSpecificlocalizationTextLoader) {
+                    return RealmSpecificlocalizationTextLoader();
+                }
+            },
+            controller : 'RealmLocalizationDetailCtrl'
         })
         .when('/server-info', {
             templateUrl : resourceUrl + '/partials/server-info.html',
@@ -2379,6 +2645,23 @@ module.directive('kcEnter', function() {
                 });
 
                 event.preventDefault();
+            }
+        });
+    };
+});
+
+// Don't allow URI reserved characters
+module.directive('kcNoReservedChars', function (Notifications, $translate) {
+    return function($scope, element) {
+        element.bind("keypress", function(event) {
+            var keyPressed = String.fromCharCode(event.which || event.keyCode || 0);
+            
+            // ] and ' can not be used inside a character set on POSIX and GNU
+            if (keyPressed.match('[:/?#[@!$&()*+,;=]') || keyPressed === ']' || keyPressed === '\'') {
+                event.preventDefault();
+                $scope.$apply(function() {
+                    Notifications.warn($translate.instant('key-not-allowed-here', {character: keyPressed}));
+                });
             }
         });
     };
@@ -2773,14 +3056,18 @@ module.controller('ProviderConfigCtrl', function ($modal, $scope, $route, Compon
         })
     }
 
-    $scope.changeClient = function(configName, config, client) {
+    $scope.changeClient = function(configName, config, client, multivalued) {
         if (!client || !client.id) {
             config[configName] = null;
             $scope.selectedClient = null;
             return;
         }
         $scope.selectedClient = client;
-        config[configName] = client.clientId;
+        if (multivalued) {
+            config[configName][0] = client.clientId;
+        } else {
+            config[configName] = client.clientId;
+        }
     };
 
     ComponentUtils.convertAllMultivaluedStringValuesToList($scope.properties, $scope.config);

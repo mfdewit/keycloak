@@ -83,7 +83,7 @@ function getAccessObject(Auth, Current) {
 }
 
 
-module.controller('GlobalCtrl', function($scope, $http, Auth, Current, $location, Notifications, ServerInfo) {
+module.controller('GlobalCtrl', function($scope, $http, Auth, Current, $location, Notifications, ServerInfo, RealmSpecificLocalizationTexts) {
     $scope.authUrl = authUrl;
     $scope.resourceUrl = resourceUrl;
     $scope.auth = Auth;
@@ -97,6 +97,18 @@ module.controller('GlobalCtrl', function($scope, $http, Auth, Current, $location
         $scope.fragment = $location.path();
         $scope.path = $location.path().substring(1).split("/");
     });
+
+    $scope.$watch(function() {
+        return Current.realm;
+    }, function() {
+        if(Current.realm !== null && currentRealm !== Current.realm.id) {
+            currentRealm = Current.realm.id;
+            translateProvider.translations(locale, resourceBundle);
+            RealmSpecificLocalizationTexts.get({id: Current.realm.realm, locale: locale}, function (localizationTexts) {
+                translateProvider.translations(locale, localizationTexts.toJSON());
+            })
+        }
+    })
 });
 
 module.controller('HomeCtrl', function(Realm, Auth, Current, $location) {
@@ -440,6 +452,11 @@ module.controller('RealmWebAuthnPasswordlessPolicyCtrl', function ($scope, Curre
     genericRealmUpdate($scope, Current, Realm, realm, serverInfo, $http, $route, Dialog, Notifications, "/realms/" + realm.realm + "/authentication/webauthn-policy-passwordless");
 });
 
+module.controller('RealmCibaPolicyCtrl', function ($scope, Current, Realm, realm, serverInfo, $http, $route, $location, Dialog, Notifications) {
+
+    genericRealmUpdate($scope, Current, Realm, realm, serverInfo, $http, $route, Dialog, Notifications, "/realms/" + realm.realm + "/authentication/ciba-policy");
+});
+
 module.controller('RealmThemeCtrl', function($scope, Current, Realm, realm, serverInfo, $http, $route, Dialog, Notifications) {
     genericRealmUpdate($scope, Current, Realm, realm, serverInfo, $http, $route, Dialog, Notifications, "/realms/" + realm.realm + "/theme-settings");
 
@@ -497,6 +514,131 @@ module.controller('RealmThemeCtrl', function($scope, Current, Realm, realm, serv
     $scope.$watch('realm.accountTheme', updateSupported);
     $scope.$watch('realm.emailTheme', updateSupported);
     $scope.$watch('realm.internationalizationEnabled', updateSupported);
+});
+
+module.controller('RealmLocalizationCtrl', function($scope, Current, $location, Realm, realm, serverInfo, Notifications, RealmSpecificLocales, realmSpecificLocales, RealmSpecificLocalizationTexts, RealmSpecificLocalizationText, Dialog, $translate){
+    $scope.realm = realm;
+    $scope.realmSpecificLocales = realmSpecificLocales;
+    $scope.newLocale = null;
+    $scope.selectedRealmSpecificLocales = null;
+    $scope.localizationTexts = null;
+
+    $scope.createLocale = function() {
+        if(!$scope.newLocale) {
+            Notifications.error($translate.instant('missing-locale'));
+            return;
+        }
+        $scope.realmSpecificLocales.push($scope.newLocale)
+        $scope.selectedRealmSpecificLocales = $scope.newLocale;
+        $scope.newLocale = null;
+        $location.url('/create/localization/' + realm.realm + '/' + $scope.selectedRealmSpecificLocales);
+    }
+
+    $scope.$watch(function() {
+        return $scope.selectedRealmSpecificLocales;
+    }, function() {
+        if($scope.selectedRealmSpecificLocales != null) {
+            $scope.updateRealmSpecificLocalizationTexts();
+        }
+    })
+
+    $scope.updateRealmSpecificLocales = function() {
+        RealmSpecificLocales.get({id: realm.realm}, function (updated) {
+            $scope.realmSpecificLocales = updated;
+        })
+    }
+
+    $scope.updateRealmSpecificLocalizationTexts = function() {
+        RealmSpecificLocalizationTexts.get({id: realm.realm, locale: $scope.selectedRealmSpecificLocales }, function (updated) {
+            $scope.localizationTexts = updated;
+        })
+    }
+
+    $scope.removeLocalizationText = function(key) {
+        Dialog.confirmDelete(key, 'localization text', function() {
+            RealmSpecificLocalizationText.remove({
+                realm: realm.realm,
+                locale: $scope.selectedRealmSpecificLocales,
+                key: key
+            }, function () {
+                $scope.updateRealmSpecificLocalizationTexts();
+                Notifications.success($translate.instant('localization-text.remove.success'));
+            });
+        });
+    }
+});
+
+module.controller('RealmLocalizationUploadCtrl', function($scope, Current, Realm, realm, serverInfo, $http, $route, Dialog, Notifications, $upload, $translate){
+    $scope.realm = realm;
+    $scope.locale = null;
+    $scope.files = [];
+
+    $scope.onFileSelect = function($files) {
+        $scope.files = $files;
+    };
+
+    $scope.reset = function() {
+        $scope.locale = null;
+        $scope.files = null;
+    };
+
+    $scope.save = function() {
+
+        if(!$scope.files || $scope.files.length === 0) {
+            Notifications.error($translate.instant('missing-file'));
+            return;
+        }
+        //$files: an array of files selected, each file has name, size, and type.
+        for (var i = 0; i < $scope.files.length; i++) {
+            var $file = $scope.files[i];
+            $scope.upload = $upload.upload({
+                url: authUrl + '/admin/realms/' + realm.realm + '/localization/' + $scope.locale,
+                file: $file
+            }).then(function(response) {
+                $scope.reset();
+                Notifications.success($translate.instant('localization-file.upload.success'));
+            }).catch(function() {
+                Notifications.error($translate.instant('localization-file.upload.error'));
+            });
+        }
+    };
+
+});
+
+module.controller('RealmLocalizationDetailCtrl', function($scope, Current, $location, Realm, realm, Notifications, locale, key, RealmSpecificLocalizationText, localizationText, $translate){
+    $scope.realm = realm;
+    $scope.locale = locale;
+    $scope.key = key;
+    $scope.value = ((localizationText)? localizationText.content : null);
+
+    $scope.create = !key;
+
+    $scope.save = function() {
+        if ($scope.create) {
+            RealmSpecificLocalizationText.save({
+                realm: realm.realm,
+                locale: $scope.locale,
+                key: $scope.key
+            }, $scope.value, function (data, headers) {
+                $location.url("/realms/" + realm.realm + "/localization");
+                Notifications.success($translate.instant('localization-text.create.success'));
+            });
+        } else {
+            RealmSpecificLocalizationText.save({
+                realm: realm.realm,
+                locale: $scope.locale,
+                key: $scope.key
+            }, $scope.value, function (data, headers) {
+                $location.url("/realms/" + realm.realm + "/localization");
+                Notifications.success($translate.instant('localization-text.update.success'));
+            });
+        }
+    };
+
+    $scope.cancel = function () {
+        $location.url("/realms/" + realm.realm + "/localization");
+    };
+
 });
 
 module.controller('RealmCacheCtrl', function($scope, realm, RealmClearUserCache, RealmClearRealmCache, RealmClearKeysCache, Notifications) {
@@ -610,13 +752,12 @@ module.controller('RealmPasswordPolicyCtrl', function($scope, Realm, realm, $htt
     };
 });
 
-module.controller('RealmDefaultRolesCtrl', function ($scope, $route, Realm, realm, roles, Notifications, ClientRole, Client) {
+module.controller('RealmDefaultRolesCtrl', function ($scope, $route, realm, roles, Notifications, ClientRole, Client, RoleRealmComposites, RoleClientComposites, ComponentUtils, $http) {
 
     console.log('RealmDefaultRolesCtrl');
 
     $scope.realm = realm;
-
-    $scope.availableRealmRoles = [];
+    $scope.availableRealmRoles = angular.copy(roles);
     $scope.selectedRealmRoles = [];
     $scope.selectedRealmDefRoles = [];
 
@@ -624,85 +765,106 @@ module.controller('RealmDefaultRolesCtrl', function ($scope, $route, Realm, real
     $scope.selectedClientRoles = [];
     $scope.selectedClientDefRoles = [];
 
-    if (!$scope.realm.hasOwnProperty('defaultRoles') || $scope.realm.defaultRoles === null) {
-        $scope.realm.defaultRoles = [];
-    }
-
-    // Populate available roles. Available roles are neither already assigned
-    for (var i = 0; i < roles.length; i++) {
-        var item = roles[i].name;
-
-        if ($scope.realm.defaultRoles.indexOf(item) < 0) {
-            $scope.availableRealmRoles.push(item);
+    for (var j = 0; j < $scope.availableRealmRoles.length; j++) {
+        if ($scope.availableRealmRoles[j].id === realm.defaultRole.id) {
+            var realmRole = $scope.availableRealmRoles[j];
+            var idx = $scope.availableRealmRoles.indexOf(realmRole);
+            $scope.availableRealmRoles.splice(idx, 1);
+            break;
         }
     }
+
+    $scope.realmMappings = RoleRealmComposites.query({realm : realm.realm, role : realm.defaultRole.id}, function(){
+        for (var i = 0; i < $scope.realmMappings.length; i++) {
+            var role = $scope.realmMappings[i];
+            for (var j = 0; j < $scope.availableRealmRoles.length; j++) {
+                var realmRole = $scope.availableRealmRoles[j];
+                if (realmRole.id === role.id) {
+                    var idx = $scope.availableRealmRoles.indexOf(realmRole);
+                    if (idx !== -1) {
+                        $scope.availableRealmRoles.splice(idx, 1);
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
     $scope.addRealmDefaultRole = function () {
 
-        // Remove selected roles from the Available roles and add them to realm default roles (move from left to right).
-        for (var i = 0; i < $scope.selectedRealmRoles.length; i++) {
-            var selectedRole = $scope.selectedRealmRoles[i];
-
-            $scope.realm.defaultRoles.push(selectedRole);
-
-            var index = $scope.availableRealmRoles.indexOf(selectedRole);
-            if (index > -1) {
-                $scope.availableRealmRoles.splice(index, 1);
+        $scope.selectedRealmRolesToAdd = JSON.parse('[' + $scope.selectedRealmRoles + ']');
+        $http.post(authUrl + '/admin/realms/' + realm.realm + '/roles-by-id/' + realm.defaultRole.id + '/composites',
+            $scope.selectedRealmRolesToAdd).then(function() {
+            // Remove selected roles from the Available roles and add them to realm default roles (move from left to right).
+            for (var i = 0; i < $scope.selectedRealmRolesToAdd.length; i++) {
+                var selectedRole = $scope.selectedRealmRolesToAdd[i];
+                var index = ComponentUtils.findIndexById($scope.availableRealmRoles, selectedRole.id);
+                if (index > -1) {
+                    $scope.availableRealmRoles.splice(index, 1);
+                    $scope.realmMappings.push(selectedRole);
+                }
             }
-        }
 
-        $scope.selectedRealmRoles = [];
-
-        // Update/save the realm with new default roles.
-        Realm.update($scope.realm, function () {
-            Notifications.success("Realm default roles updated.");
+            $scope.selectedRealmRoles = [];
+            $scope.selectedRealmRolesToAdd = [];
+            Notifications.success("Default roles updated.");
         });
     };
 
     $scope.deleteRealmDefaultRole = function () {
 
-        // Remove selected roles from the realm default roles and add them to available roles (move from right to left).
-        for (var i = 0; i < $scope.selectedRealmDefRoles.length; i++) {
-            $scope.availableRealmRoles.push($scope.selectedRealmDefRoles[i]);
-
-            var index = $scope.realm.defaultRoles.indexOf($scope.selectedRealmDefRoles[i]);
-            if (index > -1) {
-                $scope.realm.defaultRoles.splice(index, 1);
+        $scope.selectedClientRolesToRemove = JSON.parse('[' + $scope.selectedRealmDefRoles + ']');
+        $http.delete(authUrl + '/admin/realms/' + realm.realm + '/roles-by-id/' + realm.defaultRole.id + '/composites',
+            {data : $scope.selectedClientRolesToRemove, headers : {"content-type" : "application/json"}}).then(function() {
+            // Remove selected roles from the realm default roles and add them to available roles (move from right to left).
+            for (var i = 0; i < $scope.selectedClientRolesToRemove.length; i++) {
+                var selectedRole = $scope.selectedClientRolesToRemove[i];
+                var index = ComponentUtils.findIndexById($scope.realmMappings, selectedRole.id);
+                if (index > -1) {
+                    $scope.realmMappings.splice(index, 1);
+                    $scope.availableRealmRoles.push(selectedRole);
+                }
             }
-        }
 
-        $scope.selectedRealmDefRoles = [];
-
-        // Update/save the realm with new default roles.
-        //var realmCopy = angular.copy($scope.realm);
-        Realm.update($scope.realm, function () {
-            Notifications.success("Realm default roles updated.");
+            $scope.selectedRealmDefRoles = [];
+            $scope.selectedClientRolesToRemove = [];
+            Notifications.success("Default roles updated.");
         });
     };
 
     $scope.changeClient = function (client) {
-        $scope.selectedClient = client;
-        $scope.selectedClientRoles = [];
-        $scope.selectedClientDefRoles = [];
         if (!client || !client.id) {
             $scope.selectedClient = null;
             return;
         }
+        $scope.selectedClient = client;
+        $scope.selectedClientRoles = [];
+        $scope.selectedClientDefRoles = [];
 
         // Populate available roles for selected client
         if ($scope.selectedClient) {
-            ClientRole.query({realm: $scope.realm.realm, client: $scope.selectedClient.id}, function (appDefaultRoles) {
-                if (!$scope.selectedClient.hasOwnProperty('defaultRoles') || $scope.selectedClient.defaultRoles === null) {
-                    $scope.selectedClient.defaultRoles = [];
-                }
-
-                $scope.availableClientRoles = [];
-                console.log('default roles', appDefaultRoles);
-                for (var i = 0; i < appDefaultRoles.length; i++) {
-                    
-                    var roleName = appDefaultRoles[i].name;
-                    if ($scope.selectedClient.defaultRoles.indexOf(roleName) < 0) {
-                        $scope.availableClientRoles.push(roleName);
+            $scope.availableClientRoles = ClientRole.query({realm: realm.realm, client: client.id}, function () {
+                $scope.clientMappings = RoleClientComposites.query({realm : realm.realm, role : realm.defaultRole.id, client : client.id}, function(){
+                    for (var i = 0; i < $scope.clientMappings.length; i++) {
+                        var role = $scope.clientMappings[i];
+                        for (var j = 0; j < $scope.availableClientRoles.length; j++) {
+                            var clientRole = $scope.availableClientRoles[j];
+                            if (clientRole.id === role.id) {
+                                var idx = $scope.availableClientRoles.indexOf(clientRole);
+                                if (idx !== -1) {
+                                    $scope.availableClientRoles.splice(idx, 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+                for (var j = 0; j < $scope.availableClientRoles.length; j++) {
+                    if ($scope.availableClientRoles[j] === realm.defaultRole.id) {
+                        var clientRole = $scope.availableClientRoles[j];
+                        var idx = $scope.availableClientRoles.indexof(clientRole);
+                        $scope.availableClientRoles.splice(idx, 1);
+                        break;
                     }
                 }
             });
@@ -713,66 +875,44 @@ module.controller('RealmDefaultRolesCtrl', function ($scope, $route, Realm, real
 
     $scope.addClientDefaultRole = function () {
 
-        // Remove selected roles from the app available roles and add them to app default roles (move from left to right).
-        for (var i = 0; i < $scope.selectedClientRoles.length; i++) {
-            var role = $scope.selectedClientRoles[i];
+        $scope.selectedClientRolesToAdd = JSON.parse('[' + $scope.selectedClientRoles + ']');
+        $http.post(authUrl + '/admin/realms/' + realm.realm + '/roles-by-id/' + realm.defaultRole.id + '/composites',
+            $scope.selectedClientRolesToAdd).then(function() {
+            // Remove selected roles from the app available roles and add them to app default roles (move from left to right).
+            for (var i = 0; i < $scope.selectedClientRolesToAdd.length; i++) {
+                var selectedRole = $scope.selectedClientRolesToAdd[i];
 
-            var idx = $scope.selectedClient.defaultRoles.indexOf(role);
-            if (idx < 0) {
-                $scope.selectedClient.defaultRoles.push(role);
+                var index = ComponentUtils.findIndexById($scope.availableClientRoles, selectedRole.id);
+                if (index > -1) {
+                    $scope.availableClientRoles.splice(index, 1);
+                    $scope.clientMappings.push(selectedRole);
+                }
             }
 
-            idx = $scope.availableClientRoles.indexOf(role);
-
-            if (idx != -1) {
-                $scope.availableClientRoles.splice(idx, 1);
-            }
-        }
-
-        $scope.selectedClientRoles = [];
-
-        // Update/save the selected client with new default roles.
-        delete $scope.selectedClient.text;
-        Client.update({
-            realm: $scope.realm.realm,
-            client: $scope.selectedClient.id
-        }, $scope.selectedClient, function () {
-            Notifications.success("Your changes have been saved to the client.");
-            Client.get({realm: realm.realm, client: $scope.selectedClient.id}, function(response) {
-                response.text = response.clientId;
-                $scope.changeClient(response);
-            });
+            $scope.selectedClientRoles = [];
+            $scope.selectedClientRolesToAdd = [];
+            Notifications.success("Default roles updated.");
         });
     };
 
     $scope.rmClientDefaultRole = function () {
 
-        // Remove selected roles from the app default roles and add them to app available roles (move from right to left).
-        for (var i = 0; i < $scope.selectedClientDefRoles.length; i++) {
-            var role = $scope.selectedClientDefRoles[i];
-            var idx = $scope.selectedClient.defaultRoles.indexOf(role);
-            if (idx != -1) {
-                $scope.selectedClient.defaultRoles.splice(idx, 1);
+        $scope.selectedClientRolesToRemove = JSON.parse('[' + $scope.selectedClientDefRoles + ']');
+        $http.delete(authUrl + '/admin/realms/' + realm.realm + '/roles-by-id/' + realm.defaultRole.id + '/composites',
+            {data : $scope.selectedClientRolesToRemove, headers : {"content-type" : "application/json"}}).then(function() {
+            // Remove selected roles from the realm default roles and add them to available roles (move from right to left).
+            for (var i = 0; i < $scope.selectedClientRolesToRemove.length; i++) {
+                var selectedRole = $scope.selectedClientRolesToRemove[i];
+                var index = ComponentUtils.findIndexById($scope.clientMappings, selectedRole.id);
+                if (index > -1) {
+                    $scope.clientMappings.splice(index, 1);
+                    $scope.availableClientRoles.push(selectedRole);
+                }
             }
-            idx = $scope.availableClientRoles.indexOf(role);
-            if (idx < 0) {
-                $scope.availableClientRoles.push(role);
-            }
-        }
 
-        $scope.selectedClientDefRoles = [];
-
-        // Update/save the selected client with new default roles.
-        delete $scope.selectedClient.text;
-        Client.update({
-            realm: $scope.realm.realm,
-            client: $scope.selectedClient.id
-        }, $scope.selectedClient, function () {
-            Notifications.success("Your changes have been saved to the client.");
-            Client.get({realm: realm.realm, client: $scope.selectedClient.id}, function(response) {
-                response.text = response.clientId;
-                $scope.changeClient(response);
-            });
+            $scope.selectedClientDefRoles = [];
+            $scope.selectedClientRolesToRemove = [];
+            Notifications.success("Default roles updated.");
         });
     };
 
@@ -800,16 +940,14 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
 
     $scope.initSamlProvider = function() {
         $scope.nameIdFormats = [
-            /*
-            {
-                format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-                name: "Transient"
-            },
-            */
             {
                 format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
                 name: "Persistent"
 
+            },
+            {
+                format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                name: "Transient"
             },
             {
                 format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
@@ -840,7 +978,9 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
         $scope.signatureAlgorithms = [
             "RSA_SHA1",
             "RSA_SHA256",
+            "RSA_SHA256_MGF1",
             "RSA_SHA512",
+            "RSA_SHA512_MGF1",
             "DSA_SHA1"
         ];
         $scope.xmlKeyNameTranformers = [
@@ -871,8 +1011,10 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
             $scope.identityProvider.config.nameIDPolicyFormat = $scope.nameIdFormats[0].format;
             $scope.identityProvider.config.principalType = $scope.principalTypes[0].type;
             $scope.identityProvider.config.signatureAlgorithm = $scope.signatureAlgorithms[1];
-            $scope.identityProvider.config.samlXmlKeyNameTranformer = $scope.xmlKeyNameTranformers[1];
+            $scope.identityProvider.config.xmlSigKeyInfoKeyNameTransformer = $scope.xmlKeyNameTranformers[1];			
+            $scope.identityProvider.config.allowCreate = 'true';
         }
+        $scope.identityProvider.config.entityId = $scope.identityProvider.config.entityId || (authUrl + '/realms/' + realm.realm);
     }
 
     $scope.hidePassword = true;
@@ -900,6 +1042,7 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
         $scope.identityProvider.authenticateByDefault = false;
         $scope.identityProvider.firstBrokerLoginFlowAlias = 'first broker login';
         $scope.identityProvider.config.useJwksUrl = 'true';
+        $scope.identityProvider.config.syncMode = 'IMPORT';
         $scope.newIdentityProvider = true;
     }
 
@@ -961,9 +1104,14 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
     };
 
     var setConfig = function(data) {
+    	if (data["enabledFromMetadata"] !== undefined ) {
+             $scope.identityProvider.enabled = data["enabledFromMetadata"] == "true";
+             delete data["enabledFromMetadata"];
+        }
         for (var key in data) {
             $scope.identityProvider.config[key] = data[key];
         }
+       
     }
 
     $scope.uploadFile = function() {
@@ -1119,30 +1267,35 @@ module.controller('RealmIdentityProviderCtrl', function($scope, $filter, $upload
         }
     };
 
-});
-
-module.controller('RealmIdentityProviderExportCtrl', function(realm, identityProvider, $scope, $http, IdentityProviderExport) {
-    $scope.realm = realm;
-    $scope.identityProvider = identityProvider;
-    $scope.download = null;
-    $scope.exported = "";
-    $scope.exportedType = "";
-
-    var url = IdentityProviderExport.url({realm: realm.realm, alias: identityProvider.alias}) ;
-    $http.get(url).then(function(response) {
-        $scope.exportedType = response.headers('Content-Type');
-        $scope.exported = response.data;
-    });
-
-    $scope.download = function() {
-        var suffix = "txt";
-        if ($scope.exportedType == 'application/xml') {
-            suffix = 'xml';
-        } else if ($scope.exportedType == 'application/json') {
-            suffix = 'json';
-        }
-        saveAs(new Blob([$scope.exported], { type: $scope.exportedType }), 'keycloak.' + suffix);
+    if (instance && instance.alias) {
+        try { $scope.authnContextClassRefs = JSON.parse($scope.identityProvider.config.authnContextClassRefs || '[]'); } catch (e) { $scope.authnContextClassRefs = []; }
+        try { $scope.authnContextDeclRefs = JSON.parse($scope.identityProvider.config.authnContextDeclRefs || '[]'); } catch (e) { $scope.authnContextDeclRefs = []; }
+    } else {
+        $scope.authnContextClassRefs = [];
+        $scope.authnContextDeclRefs = [];
     }
+
+    $scope.deleteAuthnContextClassRef = function(index) {
+        $scope.authnContextClassRefs.splice(index, 1);
+        $scope.identityProvider.config.authnContextClassRefs = JSON.stringify($scope.authnContextClassRefs);
+    };
+
+    $scope.addAuthnContextClassRef = function() {
+        $scope.authnContextClassRefs.push($scope.newAuthnContextClassRef);
+        $scope.identityProvider.config.authnContextClassRefs = JSON.stringify($scope.authnContextClassRefs);
+        $scope.newAuthnContextClassRef = "";
+    };
+
+    $scope.deleteAuthnContextDeclRef = function(index) {
+        $scope.authnContextDeclRefs.splice(index, 1);
+        $scope.identityProvider.config.authnContextDeclRefs = JSON.stringify($scope.authnContextDeclRefs);
+    };
+
+    $scope.addAuthnContextDeclRef = function() {
+        $scope.authnContextDeclRefs.push($scope.newAuthnContextDeclRef);
+        $scope.identityProvider.config.authnContextDeclRefs = JSON.stringify($scope.authnContextDeclRefs);
+        $scope.newAuthnContextDeclRef = "";
+    };
 });
 
 module.controller('RealmTokenDetailCtrl', function($scope, Realm, realm, $http, $location, $route, Dialog, Notifications, TimeUnit, TimeUnit2, serverInfo) {
@@ -1159,11 +1312,16 @@ module.controller('RealmTokenDetailCtrl', function($scope, Realm, realm, $http, 
     $scope.realm.offlineSessionIdleTimeout = TimeUnit2.asUnit(realm.offlineSessionIdleTimeout);
     // KEYCLOAK-7688 Offline Session Max for Offline Token
     $scope.realm.offlineSessionMaxLifespan = TimeUnit2.asUnit(realm.offlineSessionMaxLifespan);
+    $scope.realm.clientSessionIdleTimeout = TimeUnit2.asUnit(realm.clientSessionIdleTimeout);
+    $scope.realm.clientSessionMaxLifespan = TimeUnit2.asUnit(realm.clientSessionMaxLifespan);
+    $scope.realm.clientOfflineSessionIdleTimeout = TimeUnit2.asUnit(realm.clientOfflineSessionIdleTimeout);
+    $scope.realm.clientOfflineSessionMaxLifespan = TimeUnit2.asUnit(realm.clientOfflineSessionMaxLifespan);
     $scope.realm.accessCodeLifespan = TimeUnit2.asUnit(realm.accessCodeLifespan);
     $scope.realm.accessCodeLifespanLogin = TimeUnit2.asUnit(realm.accessCodeLifespanLogin);
     $scope.realm.accessCodeLifespanUserAction = TimeUnit2.asUnit(realm.accessCodeLifespanUserAction);
     $scope.realm.actionTokenGeneratedByAdminLifespan = TimeUnit2.asUnit(realm.actionTokenGeneratedByAdminLifespan);
     $scope.realm.actionTokenGeneratedByUserLifespan = TimeUnit2.asUnit(realm.actionTokenGeneratedByUserLifespan);
+    $scope.realm.oauth2DeviceCodeLifespan = TimeUnit2.asUnit(realm.oauth2DeviceCodeLifespan);
     $scope.realm.attributes = realm.attributes
 
     var oldCopy = angular.copy($scope.realm);
@@ -1214,11 +1372,16 @@ module.controller('RealmTokenDetailCtrl', function($scope, Realm, realm, $http, 
         $scope.realm.offlineSessionIdleTimeout = $scope.realm.offlineSessionIdleTimeout.toSeconds();
         // KEYCLOAK-7688 Offline Session Max for Offline Token
         $scope.realm.offlineSessionMaxLifespan = $scope.realm.offlineSessionMaxLifespan.toSeconds();
+        $scope.realm.clientSessionIdleTimeout = $scope.realm.clientSessionIdleTimeout.toSeconds();
+        $scope.realm.clientSessionMaxLifespan = $scope.realm.clientSessionMaxLifespan.toSeconds();
+        $scope.realm.clientOfflineSessionIdleTimeout = $scope.realm.clientOfflineSessionIdleTimeout.toSeconds();
+        $scope.realm.clientOfflineSessionMaxLifespan = $scope.realm.clientOfflineSessionMaxLifespan.toSeconds();
         $scope.realm.accessCodeLifespan = $scope.realm.accessCodeLifespan.toSeconds();
         $scope.realm.accessCodeLifespanUserAction = $scope.realm.accessCodeLifespanUserAction.toSeconds();
         $scope.realm.accessCodeLifespanLogin = $scope.realm.accessCodeLifespanLogin.toSeconds();
         $scope.realm.actionTokenGeneratedByAdminLifespan = $scope.realm.actionTokenGeneratedByAdminLifespan.toSeconds();
         $scope.realm.actionTokenGeneratedByUserLifespan = $scope.realm.actionTokenGeneratedByUserLifespan.toSeconds();
+        $scope.realm.oauth2DeviceCodeLifespan = $scope.realm.oauth2DeviceCodeLifespan.toSeconds();
 
         Realm.update($scope.realm, function () {
             $route.reload();
@@ -1499,6 +1662,7 @@ module.controller('RoleTabCtrl', function(Dialog, $scope, Current, Notifications
 module.controller('RoleListCtrl', function($scope, $route, Dialog, Notifications, realm, RoleList, RoleById, filterFilter) {
     $scope.realm = realm;
     $scope.roles = [];
+    $scope.defaultRoleName = realm.defaultRole.name;
 
     $scope.query = {
         realm: realm.realm,
@@ -1541,8 +1705,14 @@ module.controller('RoleListCtrl', function($scope, $route, Dialog, Notifications
     };
 
     $scope.searchQuery();
+    
+    $scope.determineEditLink = function(role) {
+        return role.name === $scope.defaultRoleName ? "/realms/" + $scope.realm.realm + "/default-roles" : "/realms/" + $scope.realm.realm + "/roles/" + role.id;
+    }
 
     $scope.removeRole = function (role) {
+        if (role.name === $scope.defaultRoleName) return;
+
         Dialog.confirmDelete(role.name, 'role', function () {
             RoleById.remove({
                 realm: realm.realm,
@@ -2090,6 +2260,7 @@ module.controller('IdentityProviderMapperCreateCtrl', function($scope, realm, id
     
     // make first type the default
     $scope.mapperType = mapperTypes[Object.keys(mapperTypes)[0]];
+    $scope.mapper.config.syncMode = 'INHERIT';
 
     $scope.$watch(function() {
         return $location.path();
@@ -2223,9 +2394,9 @@ module.controller('CreateExecutionCtrl', function($scope, realm, parentFlow, for
 
 
 module.controller('AuthenticationFlowsCtrl', function($scope, $route, realm, flows, selectedFlow, LastFlowSelected, Dialog,
-                                                      AuthenticationFlows, AuthenticationFlowsCopy, AuthenticationFlowExecutions,
+                                                      AuthenticationFlows, AuthenticationFlowsCopy, AuthenticationFlowsUpdate, AuthenticationFlowExecutions,
                                                       AuthenticationExecution, AuthenticationExecutionRaisePriority, AuthenticationExecutionLowerPriority,
-                                                      $modal, Notifications, CopyDialog, $location) {
+                                                      $modal, Notifications, CopyDialog, UpdateDialog, $location) {
     $scope.realm = realm;
     $scope.flows = flows;
     
@@ -2326,7 +2497,6 @@ module.controller('AuthenticationFlowsCtrl', function($scope, $route, realm, flo
 
         } else if (realm.dockerAuthenticationFlow == $scope.flow.alias) {
             Notifications.error("Cannot remove flow, it is currently being used as the docker authentication flow.");
-
         } else {
             AuthenticationFlows.remove({realm: realm.realm, flow: $scope.flow.id}, function () {
                 $location.url("/realms/" + realm.realm + '/authentication/flows/' + flows[0].alias);
@@ -2334,6 +2504,18 @@ module.controller('AuthenticationFlowsCtrl', function($scope, $route, realm, flo
             })
         }
 
+    };
+
+    $scope.editFlow = function(flow) {
+        var copy = angular.copy(flow);
+        UpdateDialog.open('Update Authentication Flow', copy.alias, copy.description, function(name, desc) {
+            copy.alias = name;
+            copy.description = desc;
+            AuthenticationFlowsUpdate.update({realm: realm.realm, flow: flow.id}, copy, function() {
+                $location.url("/realms/" + realm.realm + '/authentication/flows/' + name);
+                Notifications.success("Flow updated");
+            });
+        })
     };
 
     $scope.addFlow = function() {
@@ -2371,6 +2553,22 @@ module.controller('AuthenticationFlowsCtrl', function($scope, $route, realm, flo
             setupForm();
         });
 
+    };
+
+    $scope.editExecutionFlow = function(execution) {
+        var copy = angular.copy(execution);
+        delete copy.empties;
+        delete copy.levels;
+        delete copy.preLevels;
+        delete copy.postLevels;
+        UpdateDialog.open('Update Execution Flow', copy.displayName, copy.description, function(name, desc) {
+            copy.displayName = name;
+            copy.description = desc;
+            AuthenticationFlowExecutions.update({realm: realm.realm, alias: $scope.flow.alias}, copy, function() {
+                Notifications.success("Execution Flow updated");
+                setupForm();
+            });
+        })
     };
 
     $scope.removeExecution = function(execution) {
@@ -2674,13 +2872,13 @@ module.controller('ClientRegPoliciesCtrl', function($scope, realm, clientRegistr
 
 });
 
-module.controller('ClientRegPolicyDetailCtrl', function($scope, realm, clientRegistrationPolicyProviders, instance, Dialog, Notifications, Components, ComponentUtils, $route, $location) {
+module.controller('ClientRegPolicyDetailCtrl', function ($scope, realm, clientRegistrationPolicyProviders, instance, Dialog, Notifications, Components, ComponentUtils, $route, $location, $translate) {
     $scope.realm = realm;
     $scope.instance = instance;
     $scope.providerTypes = clientRegistrationPolicyProviders;
 
-    for (var i=0 ; i<$scope.providerTypes.length ; i++) {
-        var providerType = $scope.providerTypes[i];
+    for (let i = 0; i < $scope.providerTypes.length; i++) {
+        let providerType = $scope.providerTypes[i];
         if (providerType.id === instance.providerId) {
             $scope.providerType = providerType;
             break;
@@ -2705,15 +2903,22 @@ module.controller('ClientRegPolicyDetailCtrl', function($scope, realm, clientReg
         }
     }
 
+    $translate($scope.instance.providerId + ".label")
+        .then((translatedValue) => {
+            $scope.headerTitle = translatedValue;
+        }).catch(() => {
+            $scope.headerTitle = $scope.instance.providerId;
+    });
+
     if ($scope.create) {
-        $scope.instance.name = $scope.instance.providerId;
+        $scope.instance.name = "";
         $scope.instance.parentId = realm.id;
         $scope.instance.config = {};
 
         if ($scope.providerType.properties) {
 
-            for (var i = 0; i < $scope.providerType.properties.length; i++) {
-                var configProperty = $scope.providerType.properties[i];
+            for (let i = 0; i < $scope.providerType.properties.length; i++) {
+                let configProperty = $scope.providerType.properties[i];
                 $scope.instance.config[configProperty.name] = toDefaultValue(configProperty);
             }
         }
@@ -2724,7 +2929,7 @@ module.controller('ClientRegPolicyDetailCtrl', function($scope, realm, clientReg
         ComponentUtils.addMvOptionsToMultivaluedLists($scope.providerType.properties);
     }
 
-    var oldCopy = angular.copy($scope.instance);
+    let oldCopy = angular.copy($scope.instance);
     $scope.changed = false;
 
     $scope.$watch('instance', function() {
@@ -2734,8 +2939,10 @@ module.controller('ClientRegPolicyDetailCtrl', function($scope, realm, clientReg
     }, true);
     
     $scope.reset = function() {
-        $route.reload();
+        $scope.create ? window.history.back() : $route.reload();
     };
+
+    $scope.hasValidValues = () => $scope.changed && $scope.instance.name;
 
     $scope.save = function() {
         $scope.changed = false;
@@ -2755,6 +2962,655 @@ module.controller('ClientRegPolicyDetailCtrl', function($scope, realm, clientReg
                     Notifications.success("The policy has been updated.");
                 });
         }
+    };
+
+});
+
+module.controller('ClientPoliciesProfilesListCtrl', function($scope, realm, clientProfiles, ClientPoliciesProfiles, Dialog, Notifications, $route, $location) {
+    console.log('ClientPoliciesProfilesListCtrl');
+    $scope.realm = realm;
+    $scope.clientProfiles = clientProfiles;
+
+    $scope.removeClientProfile = function(clientProfile) {
+        console.log("Deleting client profile from the JSON: " + clientProfile.name);
+
+        for (var i=0 ; i < $scope.clientProfiles.profiles.length ; i++) {
+            var currentProfile = $scope.clientProfiles.profiles[i];
+            if (currentProfile.name === clientProfile.name) {
+                $scope.clientProfiles.profiles.splice(i, 1);
+                break;
+            }
+        }
+
+        ClientPoliciesProfiles.update({
+            realm: realm.realm,
+        }, $scope.clientProfiles,  function () {
+            $route.reload();
+            Notifications.success("The client profile was deleted.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to delete client profile. Check server log for the details');
+        });
+    };
+
+});
+
+module.controller('ClientPoliciesProfilesJsonCtrl', function($scope, realm, clientProfiles, ClientPoliciesProfiles, Dialog, Notifications, $route, $location) {
+    console.log('ClientPoliciesProfilesJsonCtrl');
+    $scope.realm = realm;
+    $scope.clientProfilesString = angular.toJson(clientProfiles, true);
+
+    $scope.save = function() {
+        var clientProfilesObj = null;
+        try {
+            var clientProfilesObj = angular.fromJson($scope.clientProfilesString);
+        } catch (e) {
+            Notifications.error("Provided JSON is incorrect. See browser javascript console for the details");
+            console.log(e);
+            return;
+        }
+        var clientProfilesCompressed = angular.toJson(clientProfilesObj, false);
+
+        ClientPoliciesProfiles.update({
+            realm: realm.realm,
+        }, clientProfilesCompressed,  function () {
+            $route.reload();
+            Notifications.success("The client profiles configuration was updated.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to update client profiles. Check browser javascript console and server log for the details');
+            console.log("Error response when updating client profiles JSON: Status: " + errorResponse.status +
+                    ", statusText: " + errorResponse.statusText + ", data: " + errorResponse.data);
+        });
+    };
+
+    $scope.reset = function() {
+        $route.reload();
+    };
+
+});
+
+module.controller('ClientPoliciesProfilesEditCtrl', function($scope, realm, clientProfiles, ClientPoliciesProfiles, Dialog, Notifications, $route, $location) {
+    var targetProfileName = $route.current.params.profileName;
+    $scope.createNew = targetProfileName == null;
+    if ($scope.createNew) {
+        console.log('ClientPoliciesProfilesEditCtrl: creating new profile');
+    } else {
+        console.log('ClientPoliciesProfilesEditCtrl: updating profile ' + targetProfileName);
+    }
+
+    $scope.realm = realm;
+    $scope.editedProfile = null;
+
+    function getProfileByName(profilesArray) {
+        if (!profilesArray) return null;
+        for (var i=0 ; i < profilesArray.length ; i++) {
+            var currentProfile = profilesArray[i];
+            if (targetProfileName === currentProfile.name) {
+                return currentProfile;
+            }
+        }
+    }
+
+    if ($scope.createNew) {
+        $scope.editedProfile = {
+            name: "",
+            executors: []
+        };
+    } else {
+        var globalProfile = false;
+        $scope.editedProfile = getProfileByName(clientProfiles.profiles);
+        if (!$scope.editedProfile) {
+            $scope.editedProfile = getProfileByName(clientProfiles.globalProfiles);
+            globalProfile = true;
+        }
+
+        if ($scope.editedProfile == null) {
+            console.log("Profile of name " + targetProfileName + " not found");
+            throw 'Profile not found';
+        }
+    }
+
+    $scope.readOnly = !$scope.access.manageRealm || globalProfile;
+
+    $scope.removeExecutor = function(executorIndex) {
+        console.log("remove executor of index " + executorIndex);
+
+        // Delete executor
+        $scope.editedProfile.executors.splice(executorIndex, 1);
+
+        ClientPoliciesProfiles.update({
+            realm: realm.realm,
+        }, clientProfiles,  function () {
+            Notifications.success("The executor was deleted.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to delete executor. Check server log for the details');
+        });
+    }
+
+    $scope.save = function() {
+        if (!$scope.editedProfile.name || $scope.editedProfile.name === '') {
+            Notifications.error('Name must be provided');
+            return;
+        }
+
+        if ($scope.createNew) {
+            clientProfiles.profiles.push($scope.editedProfile);
+        }
+
+        ClientPoliciesProfiles.update({
+            realm: realm.realm,
+        }, clientProfiles,  function () {
+            if ($scope.createNew) {
+                Notifications.success("The client profile was created.");
+                $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + $scope.editedProfile.name);
+            } else {
+                Notifications.success("The client profile was updated.");
+                $location.url('/realms/' + realm.realm + '/client-policies/profiles');
+            }
+        }, function(errorResponse) {
+            if ($scope.createNew) {
+                Notifications.error('Failed to create client profile. Check server log for the details');
+            } else {
+                Notifications.error('Failed to update client profile. Check server log for the details');
+            }
+        });
+
+    };
+
+    $scope.back = function() {
+        $location.url('/realms/' + realm.realm + '/client-policies/profiles');
+    };
+
+});
+
+module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, realm, serverInfo, clientProfiles, ClientPoliciesProfiles, ComponentUtils, Dialog, Notifications, $route, $location) {
+    var updatedExecutorIndex = $route.current.params.executorIndex;
+    var targetProfileName = $route.current.params.profileName;
+    $scope.createNew = updatedExecutorIndex == null;
+    if ($scope.createNew) {
+        console.log('ClientPoliciesProfilesEditExecutorCtrl: adding executor to profile ' + targetProfileName);
+    } else {
+        console.log('ClientPoliciesProfilesEditExecutorCtrl: updating executor with index ' + updatedExecutorIndex + ' of profile ' + targetProfileName);
+    }
+    $scope.realm = realm;
+
+    function getProfileByName(profilesArray) {
+        if (!profilesArray) return null;
+        for (var i=0 ; i < profilesArray.length ; i++) {
+            var currentProfile = profilesArray[i];
+            if (targetProfileName === currentProfile.name) {
+                return currentProfile;
+            }
+        }
+    }
+
+    var globalProfile = false;
+    var editedProfile = getProfileByName(clientProfiles.profiles);
+    if (!editedProfile) {
+        editedProfile = getProfileByName(clientProfiles.globalProfiles);
+        globalProfile = true;
+    }
+    if (editedProfile == null) {
+        throw 'Client profile of specified name not found';
+    }
+
+    $scope.readOnly = !$scope.access.manageRealm || globalProfile;
+
+    $scope.executorTypes = serverInfo.componentTypes['org.keycloak.services.clientpolicy.executor.ClientPolicyExecutorProvider'];
+
+    for (var j=0 ; j < $scope.executorTypes.length ; j++) {
+        var currExecutorType = $scope.executorTypes[j];
+        if (currExecutorType.properties) {
+            console.log("Adjusting executorType: " + currExecutorType.id);
+            ComponentUtils.addMvOptionsToMultivaluedLists(currExecutorType.properties);
+        }
+    }
+
+    function getExecutorByIndex(clientProfile, executorIndex) {
+        if (clientProfile.executors.length <= executorIndex) {
+            console.error('Client profile does not have executor of specified index');
+            $location.path('/notfound');
+            return null;
+        } else {
+            return clientProfile.executors[executorIndex];
+        }
+    }
+
+    if ($scope.createNew) {
+        // make first type the default
+        $scope.executorType = $scope.executorTypes[0];
+        var oldExecutorType = $scope.executorType;
+        initConfig();
+
+        $scope.$watch('executorType', function() {
+            if (!angular.equals($scope.executorType, oldExecutorType)) {
+                oldExecutorType = $scope.executorType;
+                initConfig();
+            }
+        }, true);
+    } else {
+        var exec = getExecutorByIndex(editedProfile, updatedExecutorIndex);
+        if (exec) {
+            $scope.executor = {
+                config: exec.configuration
+            };
+
+            $scope.executorType = null;
+            for (var j=0 ; j < $scope.executorTypes.length ; j++) {
+                var currentExType = $scope.executorTypes[j];
+                if (exec.executor === currentExType.id) {
+                    $scope.executorType = currentExType;
+                    break;
+                }
+            }
+        }
+
+    }
+
+    function toDefaultValue(configProperty) {
+        if (configProperty.type === 'MultivaluedString' || configProperty.type === 'MultivaluedList') {
+            if (configProperty.defaultValue) {
+                return configProperty.defaultValue;
+            } else {
+                return [];
+            }
+        }
+
+        if (configProperty.defaultValue !== undefined) {
+            return configProperty.defaultValue;
+        } else {
+            return null;
+        }
+    }
+
+    function initConfig() {
+        console.log("Initialized config now. ConfigType is: " + $scope.executorType.id);
+        $scope.executor = {
+            config: {}
+        };
+
+       for (let i = 0; i < $scope.executorType.properties.length; i++) {
+           let configProperty = $scope.executorType.properties[i];
+           $scope.executor.config[configProperty.name] = toDefaultValue(configProperty);
+       }
+    }
+
+    $scope.save = function() {
+        console.log("save: " + $scope.executorType.id);
+
+        var executorName = $scope.executorType.id;
+        if (!editedProfile.executors) {
+            editedProfile.executors = [];
+        }
+
+        ComponentUtils.removeLastEmptyValue($scope.executor.config);
+
+        if ($scope.createNew) {
+            var selectedExecutor = {
+                executor: $scope.executorType.id,
+                configuration: $scope.executor.config
+            };
+            editedProfile.executors.push(selectedExecutor);
+        } else {
+            var currentExecutor = getExecutorByIndex(editedProfile, updatedExecutorIndex);
+            if (currentExecutor) {
+                currentExecutor.configuration = $scope.executor.config;
+            }
+         }
+
+        ClientPoliciesProfiles.update({
+            realm: realm.realm,
+        }, clientProfiles,  function () {
+            if ($scope.createNew) {
+                Notifications.success("Executor created successfully");
+            } else {
+                Notifications.success("Executor updated successfully");
+            }
+            $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + editedProfile.name);
+        });
+
+    };
+
+    $scope.cancel = function() {
+        $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + editedProfile.name);
+    };
+
+});
+
+module.controller('ClientPoliciesListCtrl', function($scope, realm, clientPolicies, ClientPolicies, Dialog, Notifications, $route, $location) {
+    console.log('ClientPoliciesListCtrl');
+    $scope.realm = realm;
+    $scope.clientPolicies = clientPolicies;
+
+    $scope.removeClientPolicy = function(clientPolicy) {
+        console.log("Deleting client policy from the JSON: " + clientPolicy.name);
+
+        for (var i=0 ; i < $scope.clientPolicies.policies.length ; i++) {
+            var currentPolicy = $scope.clientPolicies.policies[i];
+            if (currentPolicy.name === clientPolicy.name) {
+                $scope.clientPolicies.policies.splice(i, 1);
+                break;
+            }
+        }
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, $scope.clientPolicies,  function () {
+            $route.reload();
+            Notifications.success("The client policy was deleted.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to delete client policy. Check server log for the details');
+        });
+    };
+
+});
+
+module.controller('ClientPoliciesJsonCtrl', function($scope, realm, clientPolicies, Dialog, Notifications, ClientPolicies, $route, $location) {
+    console.log('ClientPoliciesJsonCtrl');
+    $scope.realm = realm;
+    $scope.clientPoliciesString = angular.toJson(clientPolicies, true);
+
+    $scope.save = function() {
+        var clientPoliciesObj = null;
+        try {
+            var clientPoliciesObj = angular.fromJson($scope.clientPoliciesString);
+        } catch (e) {
+            Notifications.error("Provided JSON is incorrect. See browser javascript console for the details");
+            console.log(e);
+            return;
+        }
+        var clientPoliciesCompressed = angular.toJson(clientPoliciesObj, false);
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, clientPoliciesCompressed,  function () {
+            $route.reload();
+            Notifications.success("The client policies configuration was updated.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to update client policies. Check browser javascript console and server log for the details');
+            console.log("Error response when updating client policies JSON: Status: " + errorResponse.status +
+                    ", statusText: " + errorResponse.statusText + ", data: " + errorResponse.data);
+        });
+    };
+
+    $scope.reset = function() {
+        $route.reload();
+    };
+});
+
+module.controller('ClientPoliciesEditCtrl', function($scope, realm, clientProfiles, clientPolicies, ClientPolicies, Dialog, Notifications, $route, $location) {
+    var targetPolicyName = $route.current.params.policyName;
+    $scope.createNew = targetPolicyName == null;
+    if ($scope.createNew) {
+        console.log('ClientPoliciesEditCtrl: creating new policy');
+    } else {
+        console.log('ClientPoliciesEditCtrl: updating policy ' + targetPolicyName);
+    }
+
+    $scope.realm = realm;
+    $scope.clientPolicies = clientPolicies;
+    $scope.clientProfiles = clientProfiles;
+    $scope.editedPolicy = null;
+
+    if ($scope.createNew) {
+        $scope.editedPolicy = {
+            name: "",
+            enabled: true,
+            profiles: [],
+            conditions: []
+        };
+    } else {
+        for (var i=0 ; i < $scope.clientPolicies.policies.length ; i++) {
+            var currentPolicy = $scope.clientPolicies.policies[i];
+            if (targetPolicyName === currentPolicy.name) {
+                $scope.editedPolicy = currentPolicy;
+                break;
+            }
+        }
+
+        if ($scope.editedPolicy == null) {
+            console.log("Policy of name " + targetPolicyName + " not found");
+            throw 'Policy not found';
+        }
+    }
+
+    $scope.readOnly = !$scope.access.manageRealm;
+
+    $scope.availableProfiles = [];
+    var allClientProfiles = clientProfiles.profiles;
+    if (clientProfiles.globalProfiles) {
+        allClientProfiles = allClientProfiles.concat(clientProfiles.globalProfiles);
+    }
+    for (var k=0 ; k<allClientProfiles.length ; k++) {
+        var profileName = allClientProfiles[k].name;
+        if (!$scope.editedPolicy.profiles || !$scope.editedPolicy.profiles.includes(profileName)) {
+            $scope.availableProfiles.push(profileName);
+        }
+    }
+
+    $scope.removeCondition = function(conditionIndex) {
+        console.log("remove condition of index " + conditionIndex);
+
+        // Delete condition
+        $scope.editedPolicy.conditions.splice(conditionIndex, 1);
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, $scope.clientPolicies,  function () {
+            Notifications.success("The condition was deleted.");
+        }, function(errorResponse) {
+            Notifications.error('Failed to delete condition. Check server log for the details');
+        });
+    }
+
+    $scope.save = function() {
+        if (!$scope.editedPolicy.name || $scope.editedPolicy.name === '') {
+            Notifications.error('Name must be provided');
+            return;
+        }
+
+        if ($scope.createNew) {
+            $scope.clientPolicies.policies.push($scope.editedPolicy);
+        }
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, $scope.clientPolicies,  function () {
+            if ($scope.createNew) {
+                Notifications.success("The client policy was created.");
+                $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + $scope.editedPolicy.name);
+            } else {
+                Notifications.success("The client policy was updated.");
+                $location.url('/realms/' + realm.realm + '/client-policies/policies');
+            }
+        }, function(errorResponse) {
+            if ($scope.createNew) {
+                Notifications.error('Failed to create client policy. Check server log for the details');
+            } else {
+                Notifications.error('Failed to update client policy. Check server log for the details');
+            }
+        });
+
+    };
+
+    $scope.back = function() {
+        $location.url('/realms/' + realm.realm + '/client-policies/policies');
+    };
+
+
+    function moveProfileAndUpdatePolicy(arrayFrom, arrayTo, profileName, notificationsMessage) {
+        for (var i=0 ; i<arrayFrom.length ; i++) {
+            if (arrayFrom[i] === profileName) {
+                arrayFrom.splice(i, 1);
+                arrayTo.push(profileName);
+                break;
+            }
+        }
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, $scope.clientPolicies,  function () {
+            Notifications.success(notificationsMessage);
+        }, function(errorResponse) {
+            Notifications.error('Failed to update profiles of the policy. Check server log for the details');
+        });
+    }
+
+    $scope.addProfile = function(profileName) {
+        console.log("addProfile: " + profileName);
+        moveProfileAndUpdatePolicy($scope.availableProfiles, $scope.editedPolicy.profiles, profileName, "Profile added to the policy");
+    };
+
+    $scope.removeProfile = function(profileName) {
+        console.log("removeProfile: " + profileName);
+        moveProfileAndUpdatePolicy( $scope.editedPolicy.profiles, $scope.availableProfiles, profileName, "Profile removed from the policy");
+    }
+
+});
+
+module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, serverInfo, clientPolicies, ClientPolicies, Components, ComponentUtils, Dialog, Notifications, $route, $location) {
+    var updatedConditionIndex = $route.current.params.conditionIndex;
+    var targetPolicyName = $route.current.params.policyName;
+    $scope.createNew = updatedConditionIndex == null;
+    if ($scope.createNew) {
+        console.log('ClientPoliciesEditConditionCtrl: adding condition to policy ' + targetPolicyName);
+    } else {
+        console.log('ClientPoliciesEditConditionCtrl: updating condition with index ' + updatedConditionIndex + ' of policy ' + targetPolicyName);
+    }
+    $scope.realm = realm;
+
+    var editedPolicy = null;
+    for (var i=0 ; i < clientPolicies.policies.length ; i++) {
+        var currentPolicy = clientPolicies.policies[i];
+        if (targetPolicyName === currentPolicy.name) {
+            editedPolicy = currentPolicy;
+            break;
+        }
+    }
+    if (editedPolicy == null) {
+        throw 'Client policy of specified name not found';
+    }
+
+    $scope.readOnly = !$scope.access.manageRealm;
+
+    $scope.conditionTypes = serverInfo.componentTypes['org.keycloak.services.clientpolicy.condition.ClientPolicyConditionProvider'];
+
+    for (var j=0 ; j < $scope.conditionTypes.length ; j++) {
+        var currConditionType = $scope.conditionTypes[j];
+        if (currConditionType.properties) {
+            console.log("Adjusting conditionType: " + currConditionType.id);
+            ComponentUtils.addMvOptionsToMultivaluedLists(currConditionType.properties);
+        }
+    }
+
+    function getConditionByIndex(clientPolicy, conditionIndex) {
+        if (clientPolicy.conditions.length <= conditionIndex) {
+            console.error('Client policy does not have condition of specified index');
+            $location.path('/notfound');
+            return null;
+        } else {
+            return clientPolicy.conditions[conditionIndex];
+        }
+    }
+
+    if ($scope.createNew) {
+        // make first type the default
+        $scope.conditionType = $scope.conditionTypes[0];
+        var oldConditionType = $scope.conditionType;
+        initConfig();
+
+        $scope.$watch('conditionType', function() {
+            if (!angular.equals($scope.conditionType, oldConditionType)) {
+                oldConditionType = $scope.conditionType;
+                initConfig();
+            }
+        }, true);
+    } else {
+        var cond = getConditionByIndex(editedPolicy, updatedConditionIndex);
+        if (cond) {
+            $scope.condition = {
+                config: cond.configuration
+            };
+
+            $scope.conditionType = null;
+            for (var j=0 ; j < $scope.conditionTypes.length ; j++) {
+                var currentCndType = $scope.conditionTypes[j];
+                if (cond.condition === currentCndType.id) {
+                    $scope.conditionType = currentCndType;
+                    break;
+                }
+            }
+        }
+
+    }
+
+    function toDefaultValue(configProperty) {
+        if (configProperty.type === 'MultivaluedString' || configProperty.type === 'MultivaluedList') {
+            if (configProperty.defaultValue) {
+                return configProperty.defaultValue;
+            } else {
+                return [];
+            }
+        }
+
+        if (configProperty.defaultValue !== undefined) {
+            return configProperty.defaultValue;
+        } else {
+            return null;
+        }
+    }
+
+    function initConfig() {
+        console.log("Initialized config now. ConfigType is: " + $scope.conditionType.id);
+        $scope.condition = {
+            config: {}
+        };
+
+       for (let i = 0; i < $scope.conditionType.properties.length; i++) {
+           let configProperty = $scope.conditionType.properties[i];
+           $scope.condition.config[configProperty.name] = toDefaultValue(configProperty);
+       }
+    }
+
+
+    $scope.save = function() {
+        console.log("save: " + $scope.conditionType.id);
+
+        var conditionName = $scope.conditionType.id;
+        if (!editedPolicy.conditions) {
+            editedPolicy.conditions = [];
+        }
+
+        ComponentUtils.removeLastEmptyValue($scope.condition.config);
+
+        var selectedCondition;
+        if ($scope.createNew) {
+            var selectedCondition = {
+                condition: $scope.conditionType.id,
+                configuration: $scope.condition.config
+            };
+            editedPolicy.conditions.push(selectedCondition);
+        } else {
+            var currentCondition = getConditionByIndex(editedPolicy, updatedConditionIndex);
+            if (currentCondition) {
+                currentCondition.configuration = $scope.condition.config;
+            }
+        }
+
+        ClientPolicies.update({
+            realm: realm.realm,
+        }, clientPolicies,  function () {
+            if ($scope.createNew) {
+                Notifications.success("Condition created successfully");
+            } else {
+                Notifications.success("Condition updated successfully");
+            }
+            $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + editedPolicy.name);
+        });
+
+    };
+
+    $scope.cancel = function() {
+        $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + editedPolicy.name);
     };
 
 });

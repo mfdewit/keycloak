@@ -27,8 +27,9 @@ import org.keycloak.authentication.requiredactions.WebAuthnPasswordlessRegisterF
 import org.keycloak.authentication.requiredactions.WebAuthnRegisterFactory;
 import org.keycloak.broker.provider.util.SimpleHttp;
 import org.keycloak.common.Profile;
+import org.keycloak.common.enums.AccountRestApiVersion;
+import org.keycloak.common.util.ObjectUtil;
 import org.keycloak.credential.CredentialTypeMetadata;
-import org.keycloak.events.EventType;
 import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.credential.OTPCredentialModel;
@@ -46,12 +47,13 @@ import org.keycloak.representations.idm.AuthenticationFlowRepresentation;
 import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.ErrorRepresentation;
+import org.keycloak.representations.idm.ProtocolMapperRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RequiredActionProviderRepresentation;
 import org.keycloak.representations.idm.RequiredActionProviderSimpleRepresentation;
 import org.keycloak.services.messages.Messages;
 import org.keycloak.services.resources.account.AccountCredentialResource;
-import org.keycloak.services.resources.account.AccountCredentialResource.PasswordUpdate;
+import org.keycloak.services.util.ResolveRelative;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.admin.authentication.AbstractAuthenticationTest;
 import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
@@ -59,6 +61,7 @@ import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.A
 import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.TokenUtil;
+import org.keycloak.testsuite.util.UserBuilder;
 
 import javax.ws.rs.core.Response;
 import java.io.IOException;
@@ -72,16 +75,15 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
-import static org.keycloak.common.Profile.Feature.ACCOUNT_API;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
 @AuthServerContainerExclude(AuthServer.REMOTE)
 @EnableFeature(value = Profile.Feature.WEB_AUTHN, skipRestart = true, onlyForProduct = true)
-@EnableFeature(value = ACCOUNT_API, skipRestart = true)
 public class AccountRestServiceTest extends AbstractRestServiceTest {
 
     @Test
@@ -96,6 +98,49 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
+    public void testUpdateSingleField() throws IOException {
+        UserRepresentation user = SimpleHttp.doGet(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).asJson(UserRepresentation.class);
+        String originalUsername = user.getUsername();
+        String originalFirstName = user.getFirstName();
+        String originalLastName = user.getLastName();
+        String originalEmail = user.getEmail();
+        Map<String, List<String>> originalAttributes = new HashMap<>(user.getAttributes());
+
+        try {
+            RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();
+
+            realmRep.setRegistrationEmailAsUsername(false);
+            adminClient.realm("test").update(realmRep);
+
+            user.setFirstName(null);
+            user.setLastName("Bob");
+            user.setEmail(null);
+            user.getAttributes().clear();
+
+            user = updateAndGet(user);
+
+            assertEquals(user.getLastName(), "Bob");
+            assertEquals(user.getFirstName(), originalFirstName);
+            assertEquals(user.getEmail(), originalEmail);
+
+        } finally {
+            RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();
+            realmRep.setEditUsernameAllowed(true);
+            adminClient.realm("test").update(realmRep);
+
+            user.setUsername(originalUsername);
+            user.setFirstName(originalFirstName);
+            user.setLastName(originalLastName);
+            user.setEmail(originalEmail);
+            user.setAttributes(originalAttributes);
+            SimpleHttp.Response response = SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).json(user).asResponse();
+            System.out.println(response.asString());
+            assertEquals(204, response.getStatus());
+        }
+
+    }
+
+    @Test
     public void testUpdateProfile() throws IOException {
         UserRepresentation user = SimpleHttp.doGet(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).asJson(UserRepresentation.class);
         String originalUsername = user.getUsername();
@@ -105,6 +150,11 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         Map<String, List<String>> originalAttributes = new HashMap<>(user.getAttributes());
 
         try {
+            RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();
+
+            realmRep.setRegistrationEmailAsUsername(false);
+            adminClient.realm("test").update(realmRep);
+
             user.setFirstName("Homer");
             user.setLastName("Simpsons");
             user.getAttributes().put("attr1", Collections.singletonList("val1"));
@@ -142,11 +192,6 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
             user = updateAndGet(user);
             assertEquals("test-user@localhost", user.getEmail());
 
-            // Update username
-            user.setUsername("updatedUsername");
-            user = updateAndGet(user);
-            assertEquals("updatedusername", user.getUsername());
-
             user.setUsername("john-doh@localhost");
             updateError(user, 409, Messages.USERNAME_EXISTS);
 
@@ -154,8 +199,24 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
             user = updateAndGet(user);
             assertEquals("test-user@localhost", user.getUsername());
 
-            RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();
+
+            realmRep.setRegistrationEmailAsUsername(true);
+            adminClient.realm("test").update(realmRep);
+
+            user.setUsername("updatedUsername");
+            user = updateAndGet(user);
+            assertEquals("test-user@localhost", user.getUsername());
+
+            realmRep.setRegistrationEmailAsUsername(false);
+            adminClient.realm("test").update(realmRep);
+
+            user.setUsername("updatedUsername");
+            user = updateAndGet(user);
+            assertEquals("updatedusername", user.getUsername());
+
+
             realmRep.setEditUsernameAllowed(false);
+            realmRep.setRegistrationEmailAsUsername(false);
             adminClient.realm("test").update(realmRep);
 
             user.setUsername("updatedUsername2");
@@ -172,9 +233,35 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
             user.setAttributes(originalAttributes);
             SimpleHttp.Response response = SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).json(user).asResponse();
             System.out.println(response.asString());
-            assertEquals(200, response.getStatus());
+            assertEquals(204, response.getStatus());
         }
 
+    }
+
+    @Test
+    public void testUpdateProfileCannotChangeThroughAttributes() throws IOException {
+        UserRepresentation user = SimpleHttp.doGet(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).asJson(UserRepresentation.class);
+        String originalUsername = user.getUsername();
+        Map<String, List<String>> originalAttributes = new HashMap<>(user.getAttributes());
+
+        try {
+            user.getAttributes().put("username", Collections.singletonList("Username"));
+            user.getAttributes().put("attr2", Collections.singletonList("val2"));
+
+            user = updateAndGet(user);
+
+            assertEquals(user.getUsername(), originalUsername);
+        } finally {
+            RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();
+            realmRep.setEditUsernameAllowed(true);
+            adminClient.realm("test").update(realmRep);
+
+            user.setUsername(originalUsername);
+            user.setAttributes(originalAttributes);
+            SimpleHttp.Response response = SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).json(user).asResponse();
+            System.out.println(response.asString());
+            assertEquals(204, response.getStatus());
+        }
     }
 
     // KEYCLOAK-7572
@@ -196,13 +283,13 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         } finally {
             user.setFirstName(originalFirstname);
             int status = SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).json(user).asStatus();
-            assertEquals(200, status);
+            assertEquals(204, status);
         }
     }
 
     private UserRepresentation updateAndGet(UserRepresentation user) throws IOException {
         int status = SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).json(user).asStatus();
-        assertEquals(200, status);
+        assertEquals(204, status);
         return SimpleHttp.doGet(getAccountUrl(null), httpClient).auth(tokenUtil.getToken()).asJson(UserRepresentation.class);
     }
 
@@ -227,21 +314,6 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         // Update with read only
         assertEquals(403, SimpleHttp.doPost(getAccountUrl(null), httpClient).auth(viewToken.getToken()).json(new UserRepresentation()).asStatus());
     }
-    
-    @Test
-    public void testProfilePreviewPermissions() throws IOException {
-        TokenUtil noaccessToken = new TokenUtil("no-account-access", "password");
-        TokenUtil viewToken = new TokenUtil("view-account-access", "password");
-        
-        // Read password details with no access
-        assertEquals(403, SimpleHttp.doGet(getAccountUrl("credentials/password"), httpClient).header("Accept", "application/json").auth(noaccessToken.getToken()).asStatus());
-        
-        // Update password with no access
-        assertEquals(403, SimpleHttp.doPost(getAccountUrl("credentials/password"), httpClient).auth(noaccessToken.getToken()).json(new PasswordUpdate()).asStatus());
-        
-        // Update password with read only
-        assertEquals(403, SimpleHttp.doPost(getAccountUrl("credentials/password"), httpClient).auth(viewToken.getToken()).json(new PasswordUpdate()).asStatus());
-    }
 
     @Test
     public void testUpdateProfilePermissions() throws IOException {
@@ -255,101 +327,10 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
-    public void testGetPasswordDetails() throws IOException {
-        getPasswordDetails();
-    }
-
-    @Test
-    public void testPostPasswordUpdate() throws IOException {
-        //Get the time of lastUpdate
-        AccountCredentialResource.PasswordDetails initialDetails = getPasswordDetails();
-
-        // ignore login event
-        events.poll();
-
-        //Change the password
-        updatePassword("password", "Str0ng3rP4ssw0rd", 200);
-
-        //Get the new value for lastUpdate
-        AccountCredentialResource.PasswordDetails updatedDetails = getPasswordDetails();
-        assertTrue(initialDetails.getLastUpdate() < updatedDetails.getLastUpdate());
-        Assert.assertEquals(EventType.UPDATE_PASSWORD.name(), events.poll().getType());
-
-        //Try to change password again; should fail as current password is incorrect
-        updatePassword("password", "Str0ng3rP4ssw0rd", 400);
-
-        //Verify that lastUpdate hasn't changed
-        AccountCredentialResource.PasswordDetails finalDetails = getPasswordDetails();
-        assertEquals(updatedDetails.getLastUpdate(), finalDetails.getLastUpdate());
-
-        //Change the password back
-        updatePassword("Str0ng3rP4ssw0rd", "password", 200);
-   }
-
-    @Test
-    public void testPasswordConfirmation() throws IOException {
-        updatePassword("password", "Str0ng3rP4ssw0rd", "confirmationDoesNotMatch", 400);
-
-        updatePassword("password", "Str0ng3rP4ssw0rd", "Str0ng3rP4ssw0rd", 200);
-
-        //Change the password back
-        updatePassword("Str0ng3rP4ssw0rd", "password", 200);
-    }
-
-    private AccountCredentialResource.PasswordDetails getPasswordDetails() throws IOException {
-        AccountCredentialResource.PasswordDetails details = SimpleHttp.doGet(getAccountUrl("credentials/password"), httpClient).auth(tokenUtil.getToken()).asJson(new TypeReference<AccountCredentialResource.PasswordDetails>() {});
-        assertTrue(details.isRegistered());
-        assertNotNull(details.getLastUpdate());
-        return details;
-    }
-
-    private void updatePassword(String currentPass, String newPass, int expectedStatus) throws IOException {
-        updatePassword(currentPass, newPass, null, expectedStatus);
-    }
-
-    private void updatePassword(String currentPass, String newPass, String confirmation, int expectedStatus) throws IOException {
-        AccountCredentialResource.PasswordUpdate passwordUpdate = new AccountCredentialResource.PasswordUpdate();
-        passwordUpdate.setCurrentPassword(currentPass);
-        passwordUpdate.setNewPassword(newPass);
-        passwordUpdate.setConfirmation(confirmation);
-        int status = SimpleHttp.doPost(getAccountUrl("credentials/password"), httpClient).auth(tokenUtil.getToken()).json(passwordUpdate).asStatus();
-        assertEquals(expectedStatus, status);
-    }
-
-    @Test
     public void testCredentialsGet() throws IOException {
         configureBrowserFlowWithWebAuthnAuthenticator("browser-webauthn");
 
-        List<AccountCredentialResource.CredentialContainer> credentials = getCredentials();
-
-        Assert.assertEquals(4, credentials.size());
-
-        AccountCredentialResource.CredentialContainer password = credentials.get(0);
-        assertCredentialContainerExpected(password, PasswordCredentialModel.TYPE, CredentialTypeMetadata.Category.BASIC_AUTHENTICATION.toString(),
-                "password-display-name", "password-help-text", "kcAuthenticatorPasswordClass",
-                null, UserModel.RequiredAction.UPDATE_PASSWORD.toString(), false, 1);
-
-        CredentialRepresentation password1 = password.getUserCredentials().get(0);
-        Assert.assertNull(password1.getSecretData());
-        Assert.assertNotNull(password1.getCredentialData());
-
-        AccountCredentialResource.CredentialContainer otp = credentials.get(1);
-        assertCredentialContainerExpected(otp, OTPCredentialModel.TYPE, CredentialTypeMetadata.Category.TWO_FACTOR.toString(),
-                "otp-display-name", "otp-help-text", "kcAuthenticatorOTPClass",
-                UserModel.RequiredAction.CONFIGURE_TOTP.toString(), null, true, 0);
-
-        // WebAuthn credentials will be returned, but createAction will be still null because requiredAction "webauthn register" not yet registered
-        AccountCredentialResource.CredentialContainer webauthn = credentials.get(2);
-        assertCredentialContainerExpected(webauthn, WebAuthnCredentialModel.TYPE_TWOFACTOR, CredentialTypeMetadata.Category.TWO_FACTOR.toString(),
-                "webauthn-display-name", "webauthn-help-text", "kcAuthenticatorWebAuthnClass",
-                null, null, true, 0);
-
-        AccountCredentialResource.CredentialContainer webauthnPasswordless = credentials.get(3);
-        assertCredentialContainerExpected(webauthnPasswordless, WebAuthnCredentialModel.TYPE_PASSWORDLESS, CredentialTypeMetadata.Category.PASSWORDLESS.toString(),
-                "webauthn-passwordless-display-name", "webauthn-passwordless-help-text", "kcAuthenticatorWebAuthnPasswordlessClass",
-                null, null, true, 0);
-
-        // Register requiredActions for WebAuthn
+        // Register requiredActions for WebAuthn and WebAuthn Passwordless
         RequiredActionProviderSimpleRepresentation requiredAction = new RequiredActionProviderSimpleRepresentation();
         requiredAction.setId("12345");
         requiredAction.setName(WebAuthnRegisterFactory.PROVIDER_ID);
@@ -362,27 +343,47 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         requiredAction.setProviderId(WebAuthnPasswordlessRegisterFactory.PROVIDER_ID);
         testRealm().flows().registerRequiredAction(requiredAction);
 
-        // requiredActions should be available
-        credentials = getCredentials();
-        Assert.assertEquals(WebAuthnRegisterFactory.PROVIDER_ID, credentials.get(2).getCreateAction());
-        Assert.assertEquals(WebAuthnPasswordlessRegisterFactory.PROVIDER_ID, credentials.get(3).getCreateAction());
+        List<AccountCredentialResource.CredentialContainer> credentials = getCredentials();
 
-        // disable WebAuthn passwordless required action. It won't be returned then
-        RequiredActionProviderRepresentation requiredActionRep = testRealm().flows().getRequiredAction(WebAuthnPasswordlessRegisterFactory.PROVIDER_ID);
-        requiredActionRep.setEnabled(false);
-        testRealm().flows().updateRequiredAction(WebAuthnRegisterFactory.PROVIDER_ID, requiredActionRep);
+        Assert.assertEquals(4, credentials.size());
+
+        AccountCredentialResource.CredentialContainer password = credentials.get(0);
+        assertCredentialContainerExpected(password, PasswordCredentialModel.TYPE, CredentialTypeMetadata.Category.BASIC_AUTHENTICATION.toString(),
+                "password-display-name", "password-help-text", "kcAuthenticatorPasswordClass",
+                null, UserModel.RequiredAction.UPDATE_PASSWORD.toString(), false, 1);
+
+        CredentialRepresentation password1 = password.getUserCredentials().get(0);
+        assertNull(password1.getSecretData());
+        Assert.assertNotNull(password1.getCredentialData());
+
+        AccountCredentialResource.CredentialContainer otp = credentials.get(1);
+        assertCredentialContainerExpected(otp, OTPCredentialModel.TYPE, CredentialTypeMetadata.Category.TWO_FACTOR.toString(),
+                "otp-display-name", "otp-help-text", "kcAuthenticatorOTPClass",
+                UserModel.RequiredAction.CONFIGURE_TOTP.toString(), null, true, 0);
+
+        // WebAuthn credentials will be returned, but createAction will be still null because requiredAction "webauthn register" not yet registered
+        AccountCredentialResource.CredentialContainer webauthn = credentials.get(2);
+        assertCredentialContainerExpected(webauthn, WebAuthnCredentialModel.TYPE_TWOFACTOR, CredentialTypeMetadata.Category.TWO_FACTOR.toString(),
+                "webauthn-display-name", "webauthn-help-text", "kcAuthenticatorWebAuthnClass",
+                WebAuthnRegisterFactory.PROVIDER_ID, null, true, 0);
+
+        AccountCredentialResource.CredentialContainer webauthnPasswordless = credentials.get(3);
+        assertCredentialContainerExpected(webauthnPasswordless, WebAuthnCredentialModel.TYPE_PASSWORDLESS, CredentialTypeMetadata.Category.PASSWORDLESS.toString(),
+                "webauthn-passwordless-display-name", "webauthn-passwordless-help-text", "kcAuthenticatorWebAuthnPasswordlessClass",
+                WebAuthnPasswordlessRegisterFactory.PROVIDER_ID, null, true, 0);
+
+        // disable WebAuthn passwordless required action. User doesn't have WebAuthnPasswordless credential, so WebAuthnPasswordless credentialType won't be returned
+        setRequiredActionEnabledStatus(WebAuthnPasswordlessRegisterFactory.PROVIDER_ID, false);
 
         credentials = getCredentials();
-        Assert.assertNull(credentials.get(2).getCreateAction());
+        assertExpectedCredentialTypes(credentials, PasswordCredentialModel.TYPE, OTPCredentialModel.TYPE, WebAuthnCredentialModel.TYPE_TWOFACTOR);
 
         // Test that WebAuthn won't be returned when removed from the authentication flow
         removeWebAuthnFlow("browser-webauthn");
 
         credentials = getCredentials();
 
-        Assert.assertEquals(2, credentials.size());
-        Assert.assertEquals(PasswordCredentialModel.TYPE, credentials.get(0).getType());
-        Assert.assertNotNull(OTPCredentialModel.TYPE, credentials.get(1).getType());
+        assertExpectedCredentialTypes(credentials, PasswordCredentialModel.TYPE, OTPCredentialModel.TYPE);
 
         // Test password-only
         credentials = SimpleHttp.doGet(getAccountUrl("credentials?" + AccountCredentialResource.TYPE + "=password"), httpClient)
@@ -399,7 +400,41 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         Assert.assertEquals(1, credentials.size());
         password = credentials.get(0);
         Assert.assertEquals(PasswordCredentialModel.TYPE, password.getType());
-        Assert.assertNull(password.getUserCredentials());
+        assertNull(password.getUserCredentials());
+    }
+
+
+    @Test
+    public void testCRUDCredentialOfDifferentUser() throws IOException {
+        // Get credential ID of the OTP credential of the different user thant currently logged user
+        UserResource user = ApiUtil.findUserByUsernameId(testRealm(), "user-with-one-configured-otp");
+        CredentialRepresentation otpCredential = user.credentials().stream()
+                .filter(credentialRep -> OTPCredentialModel.TYPE.equals(credentialRep.getType()))
+                .findFirst()
+                .get();
+
+        // Test that current user can't update the credential, which belongs to the different user
+        SimpleHttp.Response response = SimpleHttp
+                .doPut(getAccountUrl("credentials/" + otpCredential.getId() + "/label"), httpClient)
+                .auth(tokenUtil.getToken())
+                .json("new-label")
+                .asResponse();
+        assertEquals(404, response.getStatus());
+
+        // Test that current user can't delete the credential, which belongs to the different user
+        response = SimpleHttp
+                .doDelete(getAccountUrl("credentials/" + otpCredential.getId()), httpClient)
+                .acceptJson()
+                .auth(tokenUtil.getToken())
+                .asResponse();
+        assertEquals(404, response.getStatus());
+
+        // Assert credential was not updated or removed
+        CredentialRepresentation otpCredentialLoaded = user.credentials().stream()
+                .filter(credentialRep -> OTPCredentialModel.TYPE.equals(credentialRep.getType()))
+                .findFirst()
+                .get();
+        Assert.assertTrue(ObjectUtil.isEqualOrBothNull(otpCredential.getUserLabel(), otpCredentialLoaded.getUserLabel()));
     }
 
     // Send REST request to get all credential containers and credentials of current user
@@ -449,6 +484,59 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
                     "Browser - Conditional OTP", currentBrowserReq);
             setExecutionRequirement(DefaultAuthenticationFlows.DIRECT_GRANT_FLOW,
                     "Direct Grant - Conditional OTP", currentDirectGrantReq);
+        }
+    }
+
+    @Test
+    public void testCredentialsGetWithDisabledOtpRequiredAction() throws IOException {
+        // Assert OTP will be returned by default
+        List<AccountCredentialResource.CredentialContainer> credentials = getCredentials();
+        assertExpectedCredentialTypes(credentials, PasswordCredentialModel.TYPE, OTPCredentialModel.TYPE);
+
+        // Disable OTP required action
+        setRequiredActionEnabledStatus(UserModel.RequiredAction.CONFIGURE_TOTP.name(), false);
+
+        // Assert OTP won't be returned
+        credentials = getCredentials();
+        assertExpectedCredentialTypes(credentials, PasswordCredentialModel.TYPE);
+
+        // Add OTP credential to the user through admin REST API
+        UserResource adminUserResource = ApiUtil.findUserByUsernameId(testRealm(), "test-user@localhost");
+        org.keycloak.representations.idm.UserRepresentation userRep = UserBuilder.edit(adminUserResource.toRepresentation())
+                .totpSecret("abcdefabcdef")
+                .build();
+        adminUserResource.update(userRep);
+
+        // Assert OTP will be returned without requiredAction
+        credentials = getCredentials();
+        assertExpectedCredentialTypes(credentials, PasswordCredentialModel.TYPE, OTPCredentialModel.TYPE);
+        AccountCredentialResource.CredentialContainer otpCredential = credentials.get(1);
+        assertNull(otpCredential.getCreateAction());
+        assertNull(otpCredential.getUpdateAction());
+
+        // Revert - re-enable requiredAction and remove OTP credential from the user
+        setRequiredActionEnabledStatus(UserModel.RequiredAction.CONFIGURE_TOTP.name(), true);
+
+        String otpCredentialId = adminUserResource.credentials().stream()
+                .filter(credential -> OTPCredentialModel.TYPE.equals(credential.getType()))
+                .findFirst()
+                .get()
+                .getId();
+        adminUserResource.removeCredential(otpCredentialId);
+    }
+
+    private void setRequiredActionEnabledStatus(String requiredActionProviderId, boolean enabled) {
+        RequiredActionProviderRepresentation requiredActionRep = testRealm().flows().getRequiredAction(requiredActionProviderId);
+        requiredActionRep.setEnabled(enabled);
+        testRealm().flows().updateRequiredAction(requiredActionProviderId, requiredActionRep);
+    }
+
+    private void assertExpectedCredentialTypes(List<AccountCredentialResource.CredentialContainer> credentialTypes, String... expectedCredentialTypes) {
+        Assert.assertEquals(credentialTypes.size(), expectedCredentialTypes.length);
+        int i = 0;
+        for (AccountCredentialResource.CredentialContainer credential : credentialTypes) {
+            Assert.assertEquals(credential.getType(), expectedCredentialTypes[i]);
+            i++;
         }
     }
 
@@ -549,7 +637,7 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
     public void listApplications() throws Exception {
         oauth.clientId("in-use-client");
         OAuthClient.AccessTokenResponse tokenResponse = oauth.doGrantAccessTokenRequest("secret1", "view-applications-access", "password");
-        Assert.assertNull(tokenResponse.getErrorDescription());
+        assertNull(tokenResponse.getErrorDescription());
 
         TokenUtil token = new TokenUtil("view-applications-access", "password");
         List<ClientRepresentation> applications = SimpleHttp
@@ -563,8 +651,30 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         Map<String, ClientRepresentation> apps = applications.stream().collect(Collectors.toMap(x -> x.getClientId(), x -> x));
         Assert.assertThat(apps.keySet(), containsInAnyOrder("in-use-client", "always-display-client"));
 
-        assertClientRep(apps.get("in-use-client"), "In Use Client", null, false, true, false, inUseClientAppUri);
-        assertClientRep(apps.get("always-display-client"), "Always Display Client", null, false, false, false, alwaysDisplayClientAppUri);
+        assertClientRep(apps.get("in-use-client"), "In Use Client", null, false, true, false, null, inUseClientAppUri);
+        assertClientRep(apps.get("always-display-client"), "Always Display Client", null, false, false, false, null, alwaysDisplayClientAppUri);
+    }
+
+    @Test
+    public void listApplicationsFiltered() throws Exception {
+        oauth.clientId("in-use-client");
+        OAuthClient.AccessTokenResponse tokenResponse = oauth.doGrantAccessTokenRequest("secret1", "view-applications-access", "password");
+        assertNull(tokenResponse.getErrorDescription());
+
+        TokenUtil token = new TokenUtil("view-applications-access", "password");
+        List<ClientRepresentation> applications = SimpleHttp
+                .doGet(getAccountUrl("applications"), httpClient)
+                .header("Accept", "application/json")
+                .param("name", "In Use")
+                .auth(token.getToken())
+                .asJson(new TypeReference<List<ClientRepresentation>>() {
+                });
+        assertFalse(applications.isEmpty());
+
+        Map<String, ClientRepresentation> apps = applications.stream().collect(Collectors.toMap(x -> x.getClientId(), x -> x));
+        Assert.assertThat(apps.keySet(), containsInAnyOrder("in-use-client"));
+
+        assertClientRep(apps.get("in-use-client"), "In Use Client", null, false, true, false, null, inUseClientAppUri);
     }
 
     @Test
@@ -572,7 +682,7 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         oauth.scope(OAuth2Constants.OFFLINE_ACCESS);
         oauth.clientId("offline-client");
         OAuthClient.AccessTokenResponse offlineTokenResponse = oauth.doGrantAccessTokenRequest("secret1", "view-applications-access", "password");
-        Assert.assertNull(offlineTokenResponse.getErrorDescription());
+        assertNull(offlineTokenResponse.getErrorDescription());
 
         TokenUtil token = new TokenUtil("view-applications-access", "password");
         List<ClientRepresentation> applications = SimpleHttp
@@ -586,7 +696,7 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         Map<String, ClientRepresentation> apps = applications.stream().collect(Collectors.toMap(x -> x.getClientId(), x -> x));
         Assert.assertThat(apps.keySet(), containsInAnyOrder("offline-client", "always-display-client"));
 
-        assertClientRep(apps.get("offline-client"), "Offline Client", null, false, true, true, offlineClientAppUri);
+        assertClientRep(apps.get("offline-client"), "Offline Client", null, false, true, true, null, offlineClientAppUri);
     }
 
     @Test
@@ -625,21 +735,44 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         Assert.assertThat(apps.keySet(), containsInAnyOrder(appId, "always-display-client"));
 
         ClientRepresentation app = apps.get(appId);
-        assertClientRep(app, null, "A third party application", true, false, false, "http://localhost:8180/auth/realms/master/app/auth");
+        assertClientRep(app, null, "A third party application", true, false, false, null, "http://localhost:8180/auth/realms/master/app/auth");
         assertFalse(app.getConsent().getGrantedScopes().isEmpty());
         ConsentScopeRepresentation grantedScope = app.getConsent().getGrantedScopes().get(0);
         assertEquals(clientScopeRepresentation.getId(), grantedScope.getId());
         assertEquals(clientScopeRepresentation.getName(), grantedScope.getName());
     }
 
-    private void assertClientRep(ClientRepresentation clientRep, String name, String description, boolean userConsentRequired, boolean inUse, boolean offlineAccess, String baseUrl) {
+    @Test
+    public void listApplicationsWithRootUrl() throws Exception {
+        oauth.clientId("root-url-client");
+        OAuthClient.AccessTokenResponse tokenResponse = oauth.doGrantAccessTokenRequest("password", "view-applications-access", "password");
+        assertNull(tokenResponse.getErrorDescription());
+
+        TokenUtil token = new TokenUtil("view-applications-access", "password");
+        List<ClientRepresentation> applications = SimpleHttp
+                .doGet(getAccountUrl("applications"), httpClient)
+                .header("Accept", "application/json")
+                .auth(token.getToken())
+                .asJson(new TypeReference<List<ClientRepresentation>>() {
+                });
+        assertFalse(applications.isEmpty());
+
+        Map<String, ClientRepresentation> apps = applications.stream().collect(Collectors.toMap(x -> x.getClientId(), x -> x));
+        Assert.assertThat(apps.keySet(), containsInAnyOrder("root-url-client", "always-display-client"));
+
+        assertClientRep(apps.get("root-url-client"), null, null, false, true, false, "http://localhost:8180/foo/bar", "/baz");
+    }
+
+    private void assertClientRep(ClientRepresentation clientRep, String name, String description, boolean userConsentRequired, boolean inUse, boolean offlineAccess, String rootUrl, String baseUrl) {
         assertNotNull(clientRep);
         assertEquals(name, clientRep.getClientName());
         assertEquals(description, clientRep.getDescription());
         assertEquals(userConsentRequired, clientRep.isUserConsentRequired());
         assertEquals(inUse, clientRep.isInUse());
         assertEquals(offlineAccess, clientRep.isOfflineAccess());
+        assertEquals(rootUrl, clientRep.getRootUrl());
         assertEquals(baseUrl, clientRep.getBaseUrl());
+        assertEquals(ResolveRelative.resolveRelativeUri(null, null, rootUrl, baseUrl), clientRep.getEffectiveUrl());
     }
 
     @Test
@@ -647,30 +780,6 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
         TokenUtil token = new TokenUtil("no-account-access", "password");
         SimpleHttp.Response response = SimpleHttp
                 .doGet(getAccountUrl("applications"), httpClient)
-                .header("Accept", "application/json")
-                .auth(token.getToken())
-                .asResponse();
-        assertEquals(403, response.getStatus());
-    }
-
-    @Test
-    public void getWebConsoleApplication() throws IOException {
-        TokenUtil token = new TokenUtil("view-applications-access", "password");
-        String appId = "security-admin-console";
-        ClientRepresentation webConsole = SimpleHttp
-                .doGet(getAccountUrl("applications/" + appId), httpClient)
-                .header("Accept", "application/json")
-                .auth(token.getToken())
-                .asJson(ClientRepresentation.class);
-        assertEquals(appId, webConsole.getClientId());
-    }
-
-    @Test
-    public void getWebConsoleApplicationWithoutPermission() throws IOException {
-        TokenUtil token = new TokenUtil("no-account-access", "password");
-        String appId = "security-admin-console";
-        SimpleHttp.Response response = SimpleHttp
-                .doGet(getAccountUrl("applications/" + appId), httpClient)
                 .header("Accept", "application/json")
                 .auth(token.getToken())
                 .asResponse();
@@ -1010,14 +1119,14 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
                 .header("Accept", "application/json")
                 .auth(token.getToken())
                 .asResponse();
-        assertEquals(202, response.getStatus());
+        assertEquals(204, response.getStatus());
 
         response = SimpleHttp
                 .doDelete(getAccountUrl("applications/" + appId + "/consent"), httpClient)
                 .header("Accept", "application/json")
                 .auth(token.getToken())
                 .asResponse();
-        assertEquals(202, response.getStatus());
+        assertEquals(204, response.getStatus());
     }
 
     @Test
@@ -1042,5 +1151,97 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
                 .auth(token.getToken())
                 .asResponse();
         assertEquals(403, response.getStatus());
+    }
+
+    //KEYCLOAK-14344
+    @Test
+    public void revokeOfflineAccess() throws Exception {
+        oauth.scope(OAuth2Constants.OFFLINE_ACCESS);
+        oauth.clientId("offline-client");
+        OAuthClient.AccessTokenResponse offlineTokenResponse = oauth.doGrantAccessTokenRequest("secret1", "view-applications-access", "password");
+        assertNull(offlineTokenResponse.getErrorDescription());
+
+        TokenUtil token = new TokenUtil("view-applications-access", "password");
+
+        SimpleHttp.Response response = SimpleHttp
+                .doDelete(getAccountUrl("applications/offline-client/consent"), httpClient)
+                .header("Accept", "application/json")
+                .auth(token.getToken())
+                .asResponse();
+        assertEquals(204, response.getStatus());
+
+        List<ClientRepresentation> applications = SimpleHttp
+                .doGet(getAccountUrl("applications"), httpClient)
+                .header("Accept", "application/json")
+                .auth(token.getToken())
+                .asJson(new TypeReference<List<ClientRepresentation>>() {
+                });
+        assertFalse(applications.isEmpty());
+
+        Map<String, ClientRepresentation> apps = applications.stream().collect(Collectors.toMap(x -> x.getClientId(), x -> x));
+        Assert.assertThat(apps.keySet(), containsInAnyOrder("offline-client", "always-display-client"));
+
+        assertClientRep(apps.get("offline-client"), "Offline Client", null, false, true, false, null, offlineClientAppUri);
+    }
+
+    @Test
+    public void testApiVersion() throws IOException {
+        apiVersion = AccountRestApiVersion.DEFAULT.getStrVersion();
+
+        // a smoke test to check API with version works
+        testUpdateProfile(); // profile endpoint is the root URL of account REST service, i.e. the URL will be like "/v1/"
+        testCredentialsGet(); // "/v1/credentials"
+    }
+
+    @Test
+    public void testInvalidApiVersion() throws IOException {
+        apiVersion = "v2-foo";
+
+        SimpleHttp.Response response = SimpleHttp.doGet(getAccountUrl("credentials"), httpClient).auth(tokenUtil.getToken()).asResponse();
+        assertEquals("API version not found", response.asJson().get("error").textValue());
+        assertEquals(404, response.getStatus());
+    }
+
+    @Test
+    public void testAudience() throws Exception {
+        oauth.clientId("custom-audience");
+        OAuthClient.AccessTokenResponse tokenResponse = oauth.doGrantAccessTokenRequest("password", "test-user@localhost", "password");
+        assertNull(tokenResponse.getErrorDescription());
+
+        SimpleHttp.Response response = SimpleHttp.doGet(getAccountUrl(null), httpClient)
+                .auth(tokenResponse.getAccessToken())
+                .header("Accept", "application/json")
+                .asResponse();
+        assertEquals(401, response.getStatus());
+
+        // update to correct audience
+        org.keycloak.representations.idm.ClientRepresentation clientRep = testRealm().clients().findByClientId("custom-audience").get(0);
+        ProtocolMapperRepresentation mapperRep = clientRep.getProtocolMappers().stream().filter(m -> m.getName().equals("aud")).findFirst().orElse(null);
+        assertNotNull("Audience mapper not found", mapperRep);
+        mapperRep.getConfig().put("included.custom.audience", "account");
+        testRealm().clients().get(clientRep.getId()).getProtocolMappers().update(mapperRep.getId(), mapperRep);
+
+        tokenResponse = oauth.doGrantAccessTokenRequest("password", "test-user@localhost", "password");
+        assertNull(tokenResponse.getErrorDescription());
+
+        response = SimpleHttp.doGet(getAccountUrl(null), httpClient)
+                .auth(tokenResponse.getAccessToken())
+                .header("Accept", "application/json")
+                .asResponse();
+        assertEquals(200, response.getStatus());
+
+        // remove audience completely
+        testRealm().clients().get(clientRep.getId()).getProtocolMappers().delete(mapperRep.getId());
+
+        tokenResponse = oauth.doGrantAccessTokenRequest("password", "test-user@localhost", "password");
+        assertNull(tokenResponse.getErrorDescription());
+
+        response = SimpleHttp.doGet(getAccountUrl(null), httpClient)
+                .auth(tokenResponse.getAccessToken())
+                .header("Accept", "application/json")
+                .asResponse();
+        assertEquals(401, response.getStatus());
+
+        // custom-audience client is used only in this test so no need to revert the changes
     }
 }

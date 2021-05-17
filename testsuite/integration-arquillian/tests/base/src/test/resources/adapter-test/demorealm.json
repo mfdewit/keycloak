@@ -152,6 +152,17 @@
             "directAccessGrantsEnabled": true
         },
         {
+            "clientId": "serialization-servlet",
+            "enabled": true,
+            "adminUrl": "/serialization-servlet",
+            "baseUrl": "/serialization-servlet",
+            "redirectUris": [
+                "/serialization-servlet/*"
+            ],
+            "secret": "password",
+            "directAccessGrantsEnabled": true
+        },
+        {
             "clientId": "customer-portal-subsystem",
             "enabled": true,
             "adminUrl": "/customer-portal-subsystem",
@@ -320,6 +331,16 @@
             "baseUrl": "/token-min-ttl",
             "redirectUris": [
                 "/token-min-ttl/*"
+            ],
+            "secret": "password"
+        },
+        {
+            "clientId": "token-refresh",
+            "enabled": true,
+            "adminUrl": "/token-refresh",
+            "baseUrl": "/token-refresh",
+            "redirectUris": [
+                "/token-refresh/*"
             ],
             "secret": "password"
         },

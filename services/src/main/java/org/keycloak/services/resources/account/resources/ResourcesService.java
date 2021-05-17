@@ -27,7 +27,7 @@ import javax.ws.rs.core.Link;
 import javax.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -64,12 +64,13 @@ public class ResourcesService extends AbstractResourceService {
     public Response getResources(@QueryParam("name") String name,
             @QueryParam("first") Integer first,
             @QueryParam("max") Integer max) {
-        Map<String, String[]> filters = new HashMap<>();
+        Map<org.keycloak.authorization.model.Resource.FilterOption, String[]> filters =
+                new EnumMap<>(org.keycloak.authorization.model.Resource.FilterOption.class);
 
-        filters.put("owner", new String[] { user.getId() });
+        filters.put(org.keycloak.authorization.model.Resource.FilterOption.OWNER, new String[] { user.getId() });
 
         if (name != null) {
-            filters.put("name", new String[] { name });
+            filters.put(org.keycloak.authorization.model.Resource.FilterOption.NAME, new String[] { name });
         }
 
         return queryResponse((f, m) -> resourceStore.findByResourceServer(filters, null, f, m).stream()
@@ -111,6 +112,30 @@ public class ResourcesService extends AbstractResourceService {
                         .stream(), first, max);
     }
 
+    /**
+     */
+    @GET
+    @Path("pending-requests")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getPendingRequests() {
+        Map<PermissionTicket.FilterOption, String> filters = new EnumMap<>(PermissionTicket.FilterOption.class);
+
+        filters.put(PermissionTicket.FilterOption.REQUESTER, user.getId());
+        filters.put(PermissionTicket.FilterOption.GRANTED, Boolean.FALSE.toString());
+
+        final List<PermissionTicket> permissionTickets = ticketStore.find(filters, null, -1, -1);
+
+        final List<ResourcePermission> resourceList = new ArrayList<>(permissionTickets.size());
+        for (PermissionTicket ticket : permissionTickets) {
+            ResourcePermission resourcePermission = new ResourcePermission(ticket.getResource(), provider);
+            resourcePermission.addScope(new Scope(ticket.getScope()));
+            resourceList.add(resourcePermission);
+        }
+
+        return queryResponse(
+                (f, m) -> resourceList.stream(), -1, resourceList.size());
+    }
+
     @Path("{id}")
     public Object getResource(@PathParam("id") String id) {
         org.keycloak.authorization.model.Resource resource = resourceStore.findById(id, null);
@@ -136,11 +161,11 @@ public class ResourcesService extends AbstractResourceService {
             List<PermissionTicket> tickets;
 
             if (withRequesters) {
-                Map<String, String> filters = new HashMap<>();
+                Map<PermissionTicket.FilterOption, String> filters = new EnumMap<>(PermissionTicket.FilterOption.class);
 
-                filters.put(PermissionTicket.OWNER, user.getId());
-                filters.put(PermissionTicket.GRANTED, Boolean.TRUE.toString());
-                filters.put(PermissionTicket.RESOURCE, resource.getId());
+                filters.put(PermissionTicket.FilterOption.OWNER, user.getId());
+                filters.put(PermissionTicket.FilterOption.GRANTED, Boolean.TRUE.toString());
+                filters.put(PermissionTicket.FilterOption.RESOURCE_ID, resource.getId());
 
                 tickets = ticketStore.find(filters, null, -1, -1);
             } else {
@@ -179,10 +204,10 @@ public class ResourcesService extends AbstractResourceService {
                 result = result.subList(0, size - 1);
             }
 
-            return cors(Response.ok().entity(result).links(createPageLinks(first, max, size)));
+            return Response.ok().entity(result).links(createPageLinks(first, max, size)).build();
         }
 
-        return cors(Response.ok().entity(query.apply(-1, -1).collect(Collectors.toList())));
+        return Response.ok().entity(query.apply(-1, -1).collect(Collectors.toList())).build();
     }
 
     private Link[] createPageLinks(Integer first, Integer max, int resultSize) {
@@ -195,15 +220,15 @@ public class ResourcesService extends AbstractResourceService {
 
         if (nextPage) {
             links.add(Link.fromUri(
-                    KeycloakUriBuilder.fromUri(request.getUri().getRequestUri()).replaceQuery("first={first}&max={max}")
+                    KeycloakUriBuilder.fromUri(uriInfo.getRequestUri()).replaceQuery("first={first}&max={max}")
                             .build(first + max, max))
                     .rel("next").build());
         }
 
         if (first > 0) {
             links.add(Link.fromUri(
-                    KeycloakUriBuilder.fromUri(request.getUri().getRequestUri()).replaceQuery("first={first}&max={max}")
-                            .build(nextPage ? first : first - max, max))
+                    KeycloakUriBuilder.fromUri(uriInfo.getRequestUri()).replaceQuery("first={first}&max={max}")
+                            .build(Math.max(first - max, 0), max))
                     .rel("prev").build());
         }
 

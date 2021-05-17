@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <!--
 ~ Copyright 2016 Red Hat, Inc. and/or its affiliates
 ~ and other contributors as indicated by the @author tags.
@@ -15,16 +15,14 @@
 ~ See the License for the specific language governing permissions and
 ~ limitations under the License.
 -->
-
-<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
         <groupId>org.keycloak</groupId>
         <artifactId>keycloak-testsuite-pom</artifactId>
-        <version>9.0.1-SNAPSHOT</version>
+        <version>14.0.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     
@@ -42,25 +40,25 @@
         <app.server>undertow</app.server>
 
         <!-- Wildfly deprecated versions -->
-        <wildfly.deprecated.version>17.0.1.Final</wildfly.deprecated.version>
-        <wildfly.deprecated.wildfly.core.version>9.0.2.Final</wildfly.deprecated.wildfly.core.version>
-        <wildfly.deprecated.arquillian.wildfly.container>2.1.1.Final</wildfly.deprecated.arquillian.wildfly.container>
+        <wildfly.deprecated.version>21.0.2.Final</wildfly.deprecated.version>
+        <wildfly.deprecated.wildfly.core.version>13.0.3.Final</wildfly.deprecated.wildfly.core.version>
+        <wildfly.deprecated.arquillian.wildfly.container>2.2.0.Final</wildfly.deprecated.arquillian.wildfly.container>
 
         <!--component versions-->
         <arquillian-core.version>1.6.0.Final</arquillian-core.version>
         <!--the version of shrinkwrap_resolver should align with the version in arquillian-bom-->
         <shrinkwrap-resolver.version>3.1.4</shrinkwrap-resolver.version>
         <selenium.version>3.14.0</selenium.version>
-        <arquillian-drone.version>2.5.1</arquillian-drone.version>
+        <arquillian-drone.version>2.5.2</arquillian-drone.version>
         <arquillian-graphene.version>2.3.2</arquillian-graphene.version>
         <arquillian-wildfly-container.version>2.1.1.Final</arquillian-wildfly-container.version>
         <arquillian-wls-container.version>1.0.1.Final</arquillian-wls-container.version>
         <arquillian-jetty9-container.version>1.0.0.CR3</arquillian-jetty9-container.version>
         <arquillian-container-karaf.version>2.2.0.Final</arquillian-container-karaf.version>
         <arquillian-infinispan-container.version>1.2.0.Beta2</arquillian-infinispan-container.version>
-        <arquillian-tomcat7-container-version>1.0.1.Final</arquillian-tomcat7-container-version>
-        <arquillian-tomcat8-container-version>1.0.1.Final</arquillian-tomcat8-container-version>
-        <arquillian-tomcat9-container-version>1.0.1.Final</arquillian-tomcat9-container-version>
+        <arquillian-tomcat7-container-version>1.1.0.Final</arquillian-tomcat7-container-version>
+        <arquillian-tomcat8-container-version>1.1.0.Final</arquillian-tomcat8-container-version>
+        <arquillian-tomcat9-container-version>1.1.0.Final</arquillian-tomcat9-container-version>
         <undertow-embedded.version>1.0.0.Alpha2</undertow-embedded.version>
         <version.org.wildfly.extras.creaper>1.6.1</version.org.wildfly.extras.creaper>
         <testcontainers.version>1.5.1</testcontainers.version>
@@ -273,6 +271,11 @@
                     <artifactId>download-maven-plugin</artifactId>
                     <version>1.4.1</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>keytool-maven-plugin</artifactId>
+                    <version>1.5</version>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -437,7 +440,7 @@
                 <keycloak.connectionsJpa.driver>org.h2.Driver</keycloak.connectionsJpa.driver>
                 <keycloak.connectionsJpa.database>keycloak</keycloak.connectionsJpa.database>
                 <keycloak.connectionsJpa.user>sa</keycloak.connectionsJpa.user>
-                <keycloak.connectionsJpa.password></keycloak.connectionsJpa.password>
+                <keycloak.connectionsJpa.password/>
                 <keycloak.connectionsJpa.url>jdbc:h2:mem:test;MVCC=TRUE;DB_CLOSE_DELAY=-1</keycloak.connectionsJpa.url>
             </properties>
         </profile>
@@ -454,8 +457,8 @@
                 <!-- for the particular EAP version -->
                 <jdbc.mvn.groupId>mysql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mysql-connector-java</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mysql.version}</jdbc.mvn.version>
-                <docker.database.image>mysql:8.0.18</docker.database.image>
+                <jdbc.mvn.version>${mysql.driver.version}</jdbc.mvn.version>
+                <docker.database.image>mysql:${mysql.version}</docker.database.image>
                 <docker.database.port>3306</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <docker.database.cmd>mysqld</docker.database.cmd>
@@ -465,12 +468,6 @@
         <profile>
             <id>db-allocator-db-mysql</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <jdbc.mvn.groupId>mysql</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>mysql-connector-java</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mysql.version}</jdbc.mvn.version>
                 <dballocator.type>mysql80</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
@@ -488,8 +485,8 @@
                 <!-- for the particular EAP version -->
                 <jdbc.mvn.groupId>org.postgresql</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>postgresql</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${postgresql.version}</jdbc.mvn.version>
-                <docker.database.image>postgres:11.5</docker.database.image>
+                <jdbc.mvn.version>${postgresql.driver.version}</jdbc.mvn.version>
+                <docker.database.image>postgres:${postgresql.version}</docker.database.image>
                 <docker.database.port>5432</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <docker.database.cmd>postgres</docker.database.cmd>
@@ -499,27 +496,14 @@
         <profile>
             <id>db-allocator-db-postgres</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <jdbc.mvn.groupId>org.postgresql</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>postgresql</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${postgresql.version}</jdbc.mvn.version>
-                <dballocator.type>postgresql115</dballocator.type>
+                <dballocator.type>postgresql132</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
         <profile>
             <id>db-allocator-db-postgresplus</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <!-- For EDB, the JDBC driver will need to be downloaded and manually added to local maven repository -->
-                <jdbc.mvn.groupId>com.edb.Driver</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>edb-jdbc</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>18</jdbc.mvn.version>
-                <dballocator.type>postgresplus101</dballocator.type>
+                <dballocator.type>postgresplus131</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
@@ -536,8 +520,8 @@
                 <!-- for the particular EAP version -->
                 <jdbc.mvn.groupId>org.mariadb.jdbc</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mariadb-java-client</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mariadb.version}</jdbc.mvn.version>
-                <docker.database.image>mariadb:10.1.19</docker.database.image>
+                <jdbc.mvn.version>${mariadb.driver.version}</jdbc.mvn.version>
+                <docker.database.image>mariadb:${mariadb.version}</docker.database.image>
                 <docker.database.port>3306</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <!-- Need to explicitly enable utf8 as it is not the default settings in the mariadb docker image -->
@@ -548,20 +532,14 @@
         <profile>
             <id>db-allocator-db-mariadb</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <jdbc.mvn.groupId>org.mariadb.jdbc</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>mariadb-java-client</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mariadb.version}</jdbc.mvn.version>
-                <dballocator.type>mariadb_galera_101</dballocator.type>
+                <dballocator.type>mariadb_galera_103</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
         <profile>
-            <id>db-mssql2017</id>
+            <id>db-mssql</id>
             <properties>
-                <docker.database.image>microsoft/mssql-server-linux:2017-GA</docker.database.image>
+                <docker.database.image>mcr.microsoft.com/mssql/server:${mssql.version}</docker.database.image>
                 <docker.database.port>1433</docker.database.port>
                 <docker.database.skip>false</docker.database.skip>
                 <docker.database.postStart>/opt/mssql-tools/bin/sqlcmd -e -U sa -P vEry5tron9Pwd -d master -Q CREATE\ DATABASE\ ${keycloak.connectionsJpa.database}</docker.database.postStart>
@@ -577,19 +555,13 @@
                 <!-- for the particular EAP version -->
                 <jdbc.mvn.groupId>com.microsoft.sqlserver</jdbc.mvn.groupId>
                 <jdbc.mvn.artifactId>mssql-jdbc</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mssql.version}</jdbc.mvn.version>
+                <jdbc.mvn.version>${mssql.driver.version}</jdbc.mvn.version>
             </properties>
         </profile>
         <profile>
-            <id>db-allocator-db-mssql2017</id>
+            <id>db-allocator-db-mssql2019</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <jdbc.mvn.groupId>com.microsoft.sqlserver</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>mssql-jdbc</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>${mssql.version}</jdbc.mvn.version>
-                <dballocator.type>mssql2017</dballocator.type>
+                <dballocator.type>mssql2019</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>
         </profile>
@@ -619,12 +591,6 @@
         <profile>
             <id>db-allocator-db-oracleRAC</id>
             <properties>
-                <!-- JDBC properties point to "default" JDBC driver for the particular DB -->
-                <!-- For EAP testing, it is recommended to override those with system properties pointing to GAV of more appropriate JDBC driver -->
-                <!-- for the particular EAP version -->
-                <jdbc.mvn.groupId>com.oracle</jdbc.mvn.groupId>
-                <jdbc.mvn.artifactId>ojdbc8</jdbc.mvn.artifactId>
-                <jdbc.mvn.version>12.2.0.1</jdbc.mvn.version>
                 <dballocator.type>oracle19cRAC</dballocator.type>
                 <dballocator.skip>false</dballocator.skip>
             </properties>

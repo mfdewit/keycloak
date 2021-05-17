@@ -33,6 +33,7 @@ import javax.ws.rs.core.Response;
 
 import org.jboss.logging.Logger;
 import org.keycloak.OAuth2Constants;
+import org.keycloak.OAuthErrorException;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.ClientAuthenticationFlowContext;
 import org.keycloak.common.util.Time;
@@ -42,6 +43,7 @@ import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.SingleUseTokenStoreProvider;
+import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.provider.ProviderConfigProperty;
@@ -100,7 +102,11 @@ public class JWTClientAuthenticator extends AbstractClientAuthenticator {
             RealmModel realm = context.getRealm();
             String clientId = token.getSubject();
             if (clientId == null) {
-                throw new RuntimeException("Can't identify client. Issuer missing on JWT token");
+                throw new RuntimeException("Can't identify client. Subject missing on JWT token");
+            }
+
+            if (!clientId.equals(token.getIssuer())) {
+                throw new RuntimeException("Issuer mismatch. The issuer should match the subject");
             }
 
             context.getEvent().client(clientId);
@@ -114,6 +120,20 @@ public class JWTClientAuthenticator extends AbstractClientAuthenticator {
 
             if (!client.isEnabled()) {
                 context.failure(AuthenticationFlowError.CLIENT_DISABLED, null);
+                return;
+            }
+
+            String expectedSignatureAlg = OIDCAdvancedConfigWrapper.fromClientModel(client).getTokenEndpointAuthSigningAlg();
+            if (jws.getHeader().getAlgorithm() == null || jws.getHeader().getAlgorithm().name() == null) {
+                Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "invalid_client", "invalid signature algorithm");
+                context.challenge(challengeResponse);
+                return;
+            }
+
+            String actualSignatureAlg = jws.getHeader().getAlgorithm().name();
+            if (expectedSignatureAlg != null && !expectedSignatureAlg.equals(actualSignatureAlg)) {
+                Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "invalid_client", "invalid signature algorithm");
+                context.challenge(challengeResponse);
                 return;
             }
 
@@ -170,7 +190,7 @@ public class JWTClientAuthenticator extends AbstractClientAuthenticator {
             context.success();
         } catch (Exception e) {
             ServicesLogger.LOGGER.errorValidatingAssertion(e);
-            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "unauthorized_client", "Client authentication with signed JWT failed: " + e.getMessage());
+            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), OAuthErrorException.INVALID_CLIENT, "Client authentication with signed JWT failed: " + e.getMessage());
             context.failure(AuthenticationFlowError.INVALID_CLIENT_CREDENTIALS, challengeResponse);
         }
     }
@@ -178,7 +198,7 @@ public class JWTClientAuthenticator extends AbstractClientAuthenticator {
     protected PublicKey getSignatureValidationKey(ClientModel client, ClientAuthenticationFlowContext context, JWSInput jws) {
         PublicKey publicKey = PublicKeyStorageManager.getClientPublicKey(context.getSession(), client, jws);
         if (publicKey == null) {
-            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "unauthorized_client", "Unable to load public key");
+            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), OAuthErrorException.INVALID_CLIENT, "Unable to load public key");
             context.failure(AuthenticationFlowError.CLIENT_CREDENTIALS_SETUP_REQUIRED, challengeResponse);
             return null;
         } else {

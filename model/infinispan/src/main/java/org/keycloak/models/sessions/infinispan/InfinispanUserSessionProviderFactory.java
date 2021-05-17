@@ -24,6 +24,7 @@ import org.jboss.logging.Logger;
 import org.keycloak.Config;
 import org.keycloak.cluster.ClusterProvider;
 import org.keycloak.common.util.Environment;
+import org.keycloak.common.util.Time;
 import org.keycloak.connections.infinispan.InfinispanConnectionProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
@@ -41,14 +42,11 @@ import org.keycloak.models.sessions.infinispan.initializer.DBLockBasedCacheIniti
 import org.keycloak.models.sessions.infinispan.remotestore.RemoteCacheInvoker;
 import org.keycloak.models.sessions.infinispan.changes.SessionEntityWrapper;
 import org.keycloak.models.sessions.infinispan.entities.AuthenticatedClientSessionEntity;
-import org.keycloak.models.sessions.infinispan.entities.LoginFailureEntity;
-import org.keycloak.models.sessions.infinispan.entities.LoginFailureKey;
 import org.keycloak.models.sessions.infinispan.entities.SessionEntity;
 import org.keycloak.models.sessions.infinispan.entities.UserSessionEntity;
 import org.keycloak.models.sessions.infinispan.events.AbstractUserSessionClusterListener;
 import org.keycloak.models.sessions.infinispan.events.ClientRemovedSessionEvent;
 import org.keycloak.models.sessions.infinispan.events.RealmRemovedSessionEvent;
-import org.keycloak.models.sessions.infinispan.events.RemoveAllUserLoginFailuresEvent;
 import org.keycloak.models.sessions.infinispan.events.RemoveUserSessionsEvent;
 import org.keycloak.models.sessions.infinispan.initializer.InfinispanCacheInitializer;
 import org.keycloak.models.sessions.infinispan.initializer.OfflinePersistentUserSessionLoader;
@@ -56,6 +54,7 @@ import org.keycloak.models.sessions.infinispan.remotestore.RemoteCacheSessionLis
 import org.keycloak.models.sessions.infinispan.remotestore.RemoteCacheSessionsLoader;
 import org.keycloak.models.sessions.infinispan.util.InfinispanKeyGenerator;
 import org.keycloak.models.sessions.infinispan.util.InfinispanUtil;
+import org.keycloak.models.sessions.infinispan.util.SessionTimeouts;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.PostMigrationEvent;
 import org.keycloak.models.utils.ResetTimeOffsetEvent;
@@ -65,6 +64,8 @@ import org.keycloak.provider.ProviderEventListener;
 import java.io.Serializable;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiFunction;
+import static org.keycloak.models.sessions.infinispan.InfinispanAuthenticationSessionProviderFactory.PROVIDER_PRIORITY;
 
 public class InfinispanUserSessionProviderFactory implements UserSessionProviderFactory {
 
@@ -77,8 +78,6 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
     public static final String CLIENT_REMOVED_SESSION_EVENT = "CLIENT_REMOVED_SESSION_SESSIONS";
 
     public static final String REMOVE_USER_SESSIONS_EVENT = "REMOVE_USER_SESSIONS_EVENT";
-
-    public static final String REMOVE_ALL_LOGIN_FAILURES_EVENT = "REMOVE_ALL_LOGIN_FAILURES_EVENT";
 
     private Config.Scope config;
 
@@ -95,11 +94,9 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
         Cache<String, SessionEntityWrapper<UserSessionEntity>> offlineSessionsCache = connections.getCache(InfinispanConnectionProvider.OFFLINE_USER_SESSION_CACHE_NAME);
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessionCache = connections.getCache(InfinispanConnectionProvider.CLIENT_SESSION_CACHE_NAME);
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> offlineClientSessionsCache = connections.getCache(InfinispanConnectionProvider.OFFLINE_CLIENT_SESSION_CACHE_NAME);
-        Cache<LoginFailureKey, SessionEntityWrapper<LoginFailureEntity>> loginFailures = connections.getCache(InfinispanConnectionProvider.LOGIN_FAILURE_CACHE_NAME);
 
         return new InfinispanUserSessionProvider(session, remoteCacheInvoker, lastSessionRefreshStore, offlineLastSessionRefreshStore,
-                persisterLastSessionRefreshStore, keyGenerator,
-          cache, offlineSessionsCache, clientSessionCache, offlineClientSessionsCache, loginFailures);
+                persisterLastSessionRefreshStore, keyGenerator, cache, offlineSessionsCache, clientSessionCache, offlineClientSessionsCache);
     }
 
     @Override
@@ -109,7 +106,6 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
 
     @Override
     public void postInit(final KeycloakSessionFactory factory) {
-
         factory.register(new ProviderEventListener() {
 
             @Override
@@ -199,38 +195,38 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
         KeycloakSessionFactory sessionFactory = session.getKeycloakSessionFactory();
         ClusterProvider cluster = session.getProvider(ClusterProvider.class);
 
-        cluster.registerListener(REALM_REMOVED_SESSION_EVENT, new AbstractUserSessionClusterListener<RealmRemovedSessionEvent>(sessionFactory) {
+        cluster.registerListener(REALM_REMOVED_SESSION_EVENT,
+                new AbstractUserSessionClusterListener<RealmRemovedSessionEvent, UserSessionProvider>(sessionFactory, UserSessionProvider.class) {
 
             @Override
-            protected void eventReceived(KeycloakSession session, InfinispanUserSessionProvider provider, RealmRemovedSessionEvent sessionEvent) {
-                provider.onRealmRemovedEvent(sessionEvent.getRealmId());
+            protected void eventReceived(KeycloakSession session, UserSessionProvider provider, RealmRemovedSessionEvent sessionEvent) {
+                if (provider instanceof InfinispanUserSessionProvider) {
+                    ((InfinispanUserSessionProvider) provider).onRealmRemovedEvent(sessionEvent.getRealmId());
+                }
             }
 
         });
 
-        cluster.registerListener(CLIENT_REMOVED_SESSION_EVENT, new AbstractUserSessionClusterListener<ClientRemovedSessionEvent>(sessionFactory) {
+        cluster.registerListener(CLIENT_REMOVED_SESSION_EVENT,
+                new AbstractUserSessionClusterListener<ClientRemovedSessionEvent, UserSessionProvider>(sessionFactory, UserSessionProvider.class) {
 
             @Override
-            protected void eventReceived(KeycloakSession session, InfinispanUserSessionProvider provider, ClientRemovedSessionEvent sessionEvent) {
-                provider.onClientRemovedEvent(sessionEvent.getRealmId(), sessionEvent.getClientUuid());
+            protected void eventReceived(KeycloakSession session, UserSessionProvider provider, ClientRemovedSessionEvent sessionEvent) {
+                if (provider instanceof InfinispanUserSessionProvider) {
+                    ((InfinispanUserSessionProvider) provider).onClientRemovedEvent(sessionEvent.getRealmId(), sessionEvent.getClientUuid());
+                }
             }
 
         });
 
-        cluster.registerListener(REMOVE_USER_SESSIONS_EVENT, new AbstractUserSessionClusterListener<RemoveUserSessionsEvent>(sessionFactory) {
+        cluster.registerListener(REMOVE_USER_SESSIONS_EVENT,
+                new AbstractUserSessionClusterListener<RemoveUserSessionsEvent, UserSessionProvider>(sessionFactory, UserSessionProvider.class) {
 
             @Override
-            protected void eventReceived(KeycloakSession session, InfinispanUserSessionProvider provider, RemoveUserSessionsEvent sessionEvent) {
-                provider.onRemoveUserSessionsEvent(sessionEvent.getRealmId());
-            }
-
-        });
-
-        cluster.registerListener(REMOVE_ALL_LOGIN_FAILURES_EVENT, new AbstractUserSessionClusterListener<RemoveAllUserLoginFailuresEvent>(sessionFactory) {
-
-            @Override
-            protected void eventReceived(KeycloakSession session, InfinispanUserSessionProvider provider, RemoveAllUserLoginFailuresEvent sessionEvent) {
-                provider.onRemoveAllUserLoginFailuresEvent(sessionEvent.getRealmId());
+            protected void eventReceived(KeycloakSession session, UserSessionProvider provider, RemoveUserSessionsEvent sessionEvent) {
+                if (provider instanceof InfinispanUserSessionProvider) {
+                    ((InfinispanUserSessionProvider) provider).onRemoveUserSessionsEvent(sessionEvent.getRealmId());
+                }
             }
 
         });
@@ -245,47 +241,43 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
         InfinispanConnectionProvider ispn = session.getProvider(InfinispanConnectionProvider.class);
 
         Cache<String, SessionEntityWrapper<UserSessionEntity>> sessionsCache = ispn.getCache(InfinispanConnectionProvider.USER_SESSION_CACHE_NAME);
-        boolean sessionsRemoteCache = checkRemoteCache(session, sessionsCache, (RealmModel realm) -> {
+        RemoteCache sessionsRemoteCache = checkRemoteCache(session, sessionsCache, (RealmModel realm) -> {
             // We won't write to the remoteCache during token refresh, so the timeout needs to be longer.
-            return realm.getSsoSessionMaxLifespan() * 1000;
-        });
+            return Time.toMillis(realm.getSsoSessionMaxLifespan());
+        }, SessionTimeouts::getUserSessionLifespanMs, SessionTimeouts::getUserSessionMaxIdleMs);
 
-        if (sessionsRemoteCache) {
+        if (sessionsRemoteCache != null) {
             lastSessionRefreshStore = new CrossDCLastSessionRefreshStoreFactory().createAndInit(session, sessionsCache, false);
         }
 
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessionsCache = ispn.getCache(InfinispanConnectionProvider.CLIENT_SESSION_CACHE_NAME);
         checkRemoteCache(session, clientSessionsCache, (RealmModel realm) -> {
             // We won't write to the remoteCache during token refresh, so the timeout needs to be longer.
-            return realm.getSsoSessionMaxLifespan() * 1000;
-        });
+            return Time.toMillis(realm.getSsoSessionMaxLifespan());
+        }, SessionTimeouts::getClientSessionLifespanMs, SessionTimeouts::getClientSessionMaxIdleMs);
 
         Cache<String, SessionEntityWrapper<UserSessionEntity>> offlineSessionsCache = ispn.getCache(InfinispanConnectionProvider.OFFLINE_USER_SESSION_CACHE_NAME);
-        boolean offlineSessionsRemoteCache = checkRemoteCache(session, offlineSessionsCache, (RealmModel realm) -> {
-            return realm.getOfflineSessionIdleTimeout() * 1000;
-        });
+        RemoteCache offlineSessionsRemoteCache = checkRemoteCache(session, offlineSessionsCache, (RealmModel realm) -> {
+            return Time.toMillis(realm.getOfflineSessionIdleTimeout());
+        }, SessionTimeouts::getOfflineSessionLifespanMs, SessionTimeouts::getOfflineSessionMaxIdleMs);
 
-        if (offlineSessionsRemoteCache) {
+        if (offlineSessionsRemoteCache != null) {
             offlineLastSessionRefreshStore = new CrossDCLastSessionRefreshStoreFactory().createAndInit(session, offlineSessionsCache, true);
         }
 
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> offlineClientSessionsCache = ispn.getCache(InfinispanConnectionProvider.OFFLINE_CLIENT_SESSION_CACHE_NAME);
         checkRemoteCache(session, offlineClientSessionsCache, (RealmModel realm) -> {
-            return realm.getOfflineSessionIdleTimeout() * 1000;
-        });
-
-        Cache<LoginFailureKey, SessionEntityWrapper<LoginFailureEntity>> loginFailuresCache = ispn.getCache(InfinispanConnectionProvider.LOGIN_FAILURE_CACHE_NAME);
-        checkRemoteCache(session, loginFailuresCache, (RealmModel realm) -> {
-            return realm.getMaxDeltaTimeSeconds() * 1000;
-        });
+            return Time.toMillis(realm.getOfflineSessionIdleTimeout());
+        }, SessionTimeouts::getOfflineClientSessionLifespanMs, SessionTimeouts::getOfflineClientSessionMaxIdleMs);
     }
 
-    private <K, V extends SessionEntity> boolean checkRemoteCache(KeycloakSession session, Cache<K, SessionEntityWrapper<V>> ispnCache, RemoteCacheInvoker.MaxIdleTimeLoader maxIdleLoader) {
+    private <K, V extends SessionEntity> RemoteCache checkRemoteCache(KeycloakSession session, Cache<K, SessionEntityWrapper<V>> ispnCache, RemoteCacheInvoker.MaxIdleTimeLoader maxIdleLoader,
+                                                                      BiFunction<RealmModel, V, Long> lifespanMsLoader, BiFunction<RealmModel, V, Long> maxIdleTimeMsLoader) {
         Set<RemoteStore> remoteStores = InfinispanUtil.getRemoteStores(ispnCache);
 
         if (remoteStores.isEmpty()) {
             log.debugf("No remote store configured for cache '%s'", ispnCache.getName());
-            return false;
+            return null;
         } else {
             log.infof("Remote store configured for cache '%s'", ispnCache.getName());
 
@@ -297,9 +289,9 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
 
             remoteCacheInvoker.addRemoteCache(ispnCache.getName(), remoteCache, maxIdleLoader);
 
-            RemoteCacheSessionListener hotrodListener = RemoteCacheSessionListener.createListener(session, ispnCache, remoteCache);
+            RemoteCacheSessionListener hotrodListener = RemoteCacheSessionListener.createListener(session, ispnCache, remoteCache, lifespanMsLoader, maxIdleTimeMsLoader);
             remoteCache.addClientListener(hotrodListener);
-            return true;
+            return remoteCache;
         }
     }
 
@@ -343,5 +335,9 @@ public class InfinispanUserSessionProviderFactory implements UserSessionProvider
         return PROVIDER_ID;
     }
 
+    @Override
+    public int order() {
+        return PROVIDER_PRIORITY;
+    }
 }
 

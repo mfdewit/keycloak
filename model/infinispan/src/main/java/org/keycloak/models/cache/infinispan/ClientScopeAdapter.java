@@ -17,18 +17,16 @@
 
 package org.keycloak.models.cache.infinispan;
 
-import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.ProtocolMapperModel;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleContainerModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.cache.infinispan.entities.CachedClientScope;
+import org.keycloak.models.utils.RoleUtils;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -49,8 +47,8 @@ public class ClientScopeAdapter implements ClientScopeModel {
 
     private void getDelegateForUpdate() {
         if (updated == null) {
-            cacheSession.registerClientScopeInvalidation(cached.getId());
-            updated = cacheSession.getRealmDelegate().getClientScopeById(cached.getId(), cachedRealm);
+            cacheSession.registerClientScopeInvalidation(cached.getId(), cachedRealm.getId());
+            updated = cacheSession.getClientScopeDelegate().getClientScopeById(cachedRealm, cached.getId());
             if (updated == null) throw new IllegalStateException("Not found in database");
         }
     }
@@ -63,7 +61,7 @@ public class ClientScopeAdapter implements ClientScopeModel {
     protected boolean isUpdated() {
         if (updated != null) return true;
         if (!invalidated) return false;
-        updated = cacheSession.getRealmDelegate().getClientScopeById(cached.getId(), cachedRealm);
+        updated = cacheSession.getClientScopeDelegate().getClientScopeById(cachedRealm, cached.getId());
         if (updated == null) throw new IllegalStateException("Not found in database");
         return true;
     }
@@ -75,14 +73,15 @@ public class ClientScopeAdapter implements ClientScopeModel {
         return cached.getId();
     }
 
+    @Override
     public RealmModel getRealm() {
         return cachedRealm;
     }
 
     @Override
-    public Set<ProtocolMapperModel> getProtocolMappers() {
-        if (isUpdated()) return updated.getProtocolMappers();
-        return cached.getProtocolMappers();
+    public Stream<ProtocolMapperModel> getProtocolMappersStream() {
+        if (isUpdated()) return updated.getProtocolMappersStream();
+        return cached.getProtocolMappers().stream();
     }
 
     @Override
@@ -157,40 +156,28 @@ public class ClientScopeAdapter implements ClientScopeModel {
         updated.setProtocol(protocol);
     }
 
-    public Set<RoleModel> getScopeMappings() {
-        if (isUpdated()) return updated.getScopeMappings();
-        Set<RoleModel> roles = new HashSet<>();
-        for (String id : cached.getScope()) {
-            roles.add(cacheSession.getRoleById(id, getRealm()));
-
-        }
-        return roles;
+    @Override
+    public Stream<RoleModel> getScopeMappingsStream() {
+        if (isUpdated()) return updated.getScopeMappingsStream();
+        return cached.getScope().stream()
+          .map(id -> cacheSession.getRoleById(cachedRealm, id));
     }
 
+    @Override
     public void addScopeMapping(RoleModel role) {
         getDelegateForUpdate();
         updated.addScopeMapping(role);
     }
 
+    @Override
     public void deleteScopeMapping(RoleModel role) {
         getDelegateForUpdate();
         updated.deleteScopeMapping(role);
     }
 
-    public Set<RoleModel> getRealmScopeMappings() {
-        Set<RoleModel> roleMappings = getScopeMappings();
-
-        Set<RoleModel> appRoles = new HashSet<>();
-        for (RoleModel role : roleMappings) {
-            RoleContainerModel container = role.getContainer();
-            if (container instanceof RealmModel) {
-                if (((RealmModel) container).getId().equals(cachedRealm.getId())) {
-                    appRoles.add(role);
-                }
-            }
-        }
-
-        return appRoles;
+    @Override
+    public Stream<RoleModel> getRealmScopeMappingsStream() {
+        return getScopeMappingsStream().filter(r -> RoleUtils.isRealmRole(r, cachedRealm));
     }
 
     @Override
@@ -198,12 +185,7 @@ public class ClientScopeAdapter implements ClientScopeModel {
         if (isUpdated()) return updated.hasScope(role);
         if (cached.getScope().contains(role.getId())) return true;
 
-        Set<RoleModel> roles = getScopeMappings();
-
-        for (RoleModel mapping : roles) {
-            if (mapping.hasRole(role)) return true;
-        }
-       return false;
+        return RoleUtils.hasRole(getScopeMappingsStream(), role);
     }
 
 
@@ -239,7 +221,7 @@ public class ClientScopeAdapter implements ClientScopeModel {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof ClientModel)) return false;
+        if (!(o instanceof ClientScopeModel)) return false;
 
         ClientScopeModel that = (ClientScopeModel) o;
         return that.getId().equals(getId());
@@ -250,4 +232,8 @@ public class ClientScopeAdapter implements ClientScopeModel {
         return getId().hashCode();
     }
 
+    @Override
+    public String toString() {
+        return String.format("%s@%08x", getId(), hashCode());
+    }
 }

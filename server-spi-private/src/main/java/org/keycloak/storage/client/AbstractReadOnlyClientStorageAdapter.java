@@ -225,6 +225,11 @@ public abstract class AbstractReadOnlyClientStorageAdapter extends AbstractClien
     }
 
     @Override
+    public void addClientScopes(Set<ClientScopeModel> clientScopes, boolean defaultScope) {
+        throw new ReadOnlyException("client is read only for this update");
+    }
+
+    @Override
     public void removeClientScope(ClientScopeModel clientScope) {
         throw new ReadOnlyException("client is read only for this update");
     }

@@ -17,6 +17,7 @@
 package org.keycloak.broker.oidc;
 
 import com.fasterxml.jackson.databind.JsonNode;
+
 import org.jboss.logging.Logger;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
@@ -66,9 +67,9 @@ import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
+
 import java.io.IOException;
 import java.security.PublicKey;
-import java.util.UUID;
 
 /**
  * @author Pedro Igor
@@ -167,7 +168,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
     @Override
     protected Response exchangeStoredToken(UriInfo uriInfo, EventBuilder event, ClientModel authorizedClient, UserSessionModel tokenUserSession, UserModel tokenSubject) {
-        FederatedIdentityModel model = session.users().getFederatedIdentity(tokenSubject, getConfig().getAlias(), authorizedClient.getRealm());
+        FederatedIdentityModel model = session.users().getFederatedIdentity(authorizedClient.getRealm(), tokenSubject, getConfig().getAlias());
         if (model == null || model.getToken() == null) {
             event.detail(Details.REASON, "requested_issuer is not linked");
             event.error(Errors.INVALID_TOKEN);
@@ -317,6 +318,11 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
             super(callback, realm, event);
         }
 
+        @Override
+        public SimpleHttp generateTokenRequest(String authorizationCode) {
+            SimpleHttp simpleHttp = super.generateTokenRequest(authorizationCode);
+            return simpleHttp;
+        }
 
         @GET
         @Path("logout_response")
@@ -365,6 +371,10 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
         try {
             BrokeredIdentityContext identity = extractIdentity(tokenResponse, accessToken, idToken);
+            
+            if (!identity.getId().equals(idToken.getSubject())) {
+                throw new IdentityBrokerException("Mismatch between the subject in the id_token and the subject from the user_info endpoint");
+            }
 
             identity.getContextData().put(BROKER_NONCE_PARAM, idToken.getOtherClaims().get(OIDCLoginProtocol.NONCE_PARAM));
             
@@ -389,12 +399,14 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
         String id = idToken.getSubject();
         BrokeredIdentityContext identity = new BrokeredIdentityContext(id);
         String name = (String) idToken.getOtherClaims().get(IDToken.NAME);
+        String givenName = (String)idToken.getOtherClaims().get(IDToken.GIVEN_NAME);
+        String familyName = (String)idToken.getOtherClaims().get(IDToken.FAMILY_NAME);
         String preferredUsername = (String) idToken.getOtherClaims().get(getusernameClaimNameForIdToken());
         String email = (String) idToken.getOtherClaims().get(IDToken.EMAIL);
 
         if (!getConfig().isDisableUserInfoService()) {
             String userInfoUrl = getUserInfoUrl();
-            if (userInfoUrl != null && !userInfoUrl.isEmpty() && (id == null || name == null || preferredUsername == null || email == null)) {
+            if (userInfoUrl != null && !userInfoUrl.isEmpty()) {
 
                 if (accessToken != null) {
                     SimpleHttp.Response response = executeRequest(userInfoUrl, SimpleHttp.doGet(userInfoUrl, session).header("Authorization", "Bearer " + accessToken));
@@ -432,6 +444,8 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
                     id = getJsonProperty(userInfo, "sub");
                     name = getJsonProperty(userInfo, "name");
+                    givenName = getJsonProperty(userInfo, IDToken.GIVEN_NAME);
+                    familyName = getJsonProperty(userInfo, IDToken.FAMILY_NAME);
                     preferredUsername = getUsernameFromUserInfo(userInfo);
                     email = getJsonProperty(userInfo, "email");
                     AbstractJsonUserAttributeMapper.storeUserProfileForMapper(identity, userInfo, getConfig().getAlias());
@@ -441,7 +455,19 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
         identity.getContextData().put(VALIDATED_ID_TOKEN, idToken);
 
         identity.setId(id);
-        identity.setName(name);
+
+        if (givenName != null) {
+            identity.setFirstName(givenName);
+        }
+
+        if (familyName != null) {
+            identity.setLastName(familyName);
+        }
+
+        if (givenName == null && familyName == null) {
+            identity.setName(name);
+        }
+
         identity.setEmail(email);
 
         identity.setBrokerUserId(getConfig().getAlias() + "." + id);
@@ -510,7 +536,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
         }
     }
 
-    protected JsonWebToken validateToken(String encodedToken) {
+    public JsonWebToken validateToken(String encodedToken) {
         boolean ignoreAudience = false;
 
         return validateToken(encodedToken, ignoreAudience);
@@ -582,19 +608,23 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
     @Override
     public boolean isIssuer(String issuer, MultivaluedMap<String, String> params) {
         if (!supportsExternalExchange()) return false;
-        String requestedIssuer = params.getFirst(OAuth2Constants.SUBJECT_ISSUER);
+        String requestedIssuer = params == null ? null : params.getFirst(OAuth2Constants.SUBJECT_ISSUER);
         if (requestedIssuer == null) requestedIssuer = issuer;
         if (requestedIssuer.equals(getConfig().getAlias())) return true;
+        
+        String trustedIssuers = getConfig().getIssuer();
 
-        String[] issuers = getConfig().getIssuer().split(",");
+        if (trustedIssuers != null && trustedIssuers.length() > 0) {
+            String[] issuers = trustedIssuers.split(",");
 
-        for (String trustedIssuer : issuers) {
-            if (requestedIssuer.equals(trustedIssuer.trim())) {
-                return true;
+            for (String trustedIssuer : issuers) {
+                if (requestedIssuer.equals(trustedIssuer.trim())) {
+                    return true;
+                }
             }
         }
+        
         return false;
-
     }
 
     protected boolean supportsExternalExchange() {
@@ -625,11 +655,26 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
         String name = getJsonProperty(userInfo, "name");
         String preferredUsername = getUsernameFromUserInfo(userInfo);
+        String givenName = getJsonProperty(userInfo, "given_name");
+        String familyName = getJsonProperty(userInfo, "family_name");
         String email = getJsonProperty(userInfo, "email");
+
         AbstractJsonUserAttributeMapper.storeUserProfileForMapper(identity, userInfo, getConfig().getAlias());
 
         identity.setId(id);
-        identity.setName(name);
+        
+        if (givenName != null) {
+            identity.setFirstName(givenName);
+        }
+        
+        if (familyName != null) {
+            identity.setLastName(familyName);
+        }
+        
+        if (givenName == null && familyName == null) {
+            identity.setName(name);
+        }
+        
         identity.setEmail(email);
 
         identity.setBrokerUserId(getConfig().getAlias() + "." + id);
@@ -736,7 +781,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
         authenticationSession.setClientNote(BROKER_NONCE_PARAM, nonce);
         uriBuilder.queryParam(OIDCLoginProtocol.NONCE_PARAM, nonce);
-        
+
         return uriBuilder;
     }
 

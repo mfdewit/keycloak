@@ -26,6 +26,7 @@ import org.keycloak.jose.jwk.JSONWebKeySet;
 import org.keycloak.jose.jwk.JWK;
 import org.keycloak.jose.jwk.JWKParser;
 import org.keycloak.jose.jws.Algorithm;
+import org.keycloak.models.CibaConfig;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
@@ -42,13 +43,22 @@ import org.keycloak.representations.oidc.OIDCClientRepresentation;
 import org.keycloak.services.clientregistration.ClientRegistrationException;
 import org.keycloak.services.util.CertificateInfoHelper;
 import org.keycloak.util.JWKSUtils;
+import org.keycloak.utils.StringUtil;
 
 import java.net.URI;
 import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
+
+import static org.keycloak.models.OAuth2DeviceConfig.OAUTH2_DEVICE_AUTHORIZATION_GRANT_ENABLED;
+import static org.keycloak.models.CibaConfig.OIDC_CIBA_GRANT_ENABLED;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -62,6 +72,10 @@ public class DescriptionConverter {
         client.setName(clientOIDC.getClientName());
         client.setRedirectUris(clientOIDC.getRedirectUris());
         client.setBaseUrl(clientOIDC.getClientUri());
+        client.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
+
+        String scopeParam = clientOIDC.getScope();
+        if (scopeParam != null) client.setOptionalClientScopes(new ArrayList<>(Arrays.asList(scopeParam.split(" "))));
 
         List<String> oidcResponseTypes = clientOIDC.getResponseTypes();
         if (oidcResponseTypes == null || oidcResponseTypes.isEmpty()) {
@@ -74,28 +88,33 @@ public class DescriptionConverter {
             client.setStandardFlowEnabled(responseType.hasResponseType(OIDCResponseType.CODE));
             client.setImplicitFlowEnabled(responseType.isImplicitOrHybridFlow());
 
-            client.setPublicClient(responseType.isImplicitFlow());
-
             if (oidcGrantTypes != null) {
                 client.setDirectAccessGrantsEnabled(oidcGrantTypes.contains(OAuth2Constants.PASSWORD));
                 client.setServiceAccountsEnabled(oidcGrantTypes.contains(OAuth2Constants.CLIENT_CREDENTIALS));
+                setOidcCibaGrantEnabled(client, oidcGrantTypes.contains(OAuth2Constants.CIBA_GRANT_TYPE));
             }
         } catch (IllegalArgumentException iae) {
             throw new ClientRegistrationException(iae.getMessage(), iae);
         }
 
         String authMethod = clientOIDC.getTokenEndpointAuthMethod();
-        ClientAuthenticatorFactory clientAuthFactory;
-        if (authMethod == null) {
-            clientAuthFactory = (ClientAuthenticatorFactory) session.getKeycloakSessionFactory().getProviderFactory(ClientAuthenticator.class, KeycloakModelUtils.getDefaultClientAuthenticatorType());
+        client.setPublicClient(Boolean.FALSE);
+        if ("none".equals(authMethod)) {
+            client.setClientAuthenticatorType("none");
+            client.setPublicClient(Boolean.TRUE);
         } else {
-            clientAuthFactory = AuthorizeClientUtil.findClientAuthenticatorForOIDCAuthMethod(session, authMethod);
-        }
+            ClientAuthenticatorFactory clientAuthFactory;
+            if (authMethod == null) {
+                clientAuthFactory = (ClientAuthenticatorFactory) session.getKeycloakSessionFactory().getProviderFactory(ClientAuthenticator.class, KeycloakModelUtils.getDefaultClientAuthenticatorType());
+            } else {
+                clientAuthFactory = AuthorizeClientUtil.findClientAuthenticatorForOIDCAuthMethod(session, authMethod);
+            }
 
-        if (clientAuthFactory == null) {
-            throw new ClientRegistrationException("Not found clientAuthenticator for requested token_endpoint_auth_method");
+            if (clientAuthFactory == null) {
+                throw new ClientRegistrationException("Not found clientAuthenticator for requested token_endpoint_auth_method");
+            }
+            client.setClientAuthenticatorType(clientAuthFactory.getId());
         }
-        client.setClientAuthenticatorType(clientAuthFactory.getId());
 
         boolean publicKeySet = setPublicKey(clientOIDC, client);
         if (authMethod != null && authMethod.equals(OIDCLoginProtocol.PRIVATE_KEY_JWT) && !publicKeySet) {
@@ -121,6 +140,10 @@ public class DescriptionConverter {
             else configWrapper.setUseMtlsHoKToken(false);
         }
 
+        if (clientOIDC.getTlsClientAuthSubjectDn() != null) {
+            configWrapper.setTlsClientAuthSubjectDn(clientOIDC.getTlsClientAuthSubjectDn());
+        }
+
         if (clientOIDC.getIdTokenSignedResponseAlg() != null) {
             configWrapper.setIdTokenSignedResponseAlg(clientOIDC.getIdTokenSignedResponseAlg());
         }
@@ -133,9 +156,51 @@ public class DescriptionConverter {
             configWrapper.setIdTokenEncryptedResponseEnc(clientOIDC.getIdTokenEncryptedResponseEnc());
         }
 
+        if (clientOIDC.getRequestUris() != null) {
+            configWrapper.setRequestUris(clientOIDC.getRequestUris());
+        }
+
+        configWrapper.setTokenEndpointAuthSigningAlg(clientOIDC.getTokenEndpointAuthSigningAlg());
+
+        configWrapper.setBackchannelLogoutUrl(clientOIDC.getBackchannelLogoutUri());
+
+        if (clientOIDC.getBackchannelLogoutSessionRequired() == null) {
+            configWrapper.setBackchannelLogoutSessionRequired(true);
+        } else {
+            configWrapper.setBackchannelLogoutSessionRequired(clientOIDC.getBackchannelLogoutSessionRequired());
+        }
+
+        if (clientOIDC.getBackchannelLogoutRevokeOfflineTokens() == null) {
+            configWrapper.setBackchannelLogoutRevokeOfflineTokens(false);
+        } else {
+            configWrapper.setBackchannelLogoutRevokeOfflineTokens(clientOIDC.getBackchannelLogoutRevokeOfflineTokens());
+        }
+
+        String backchannelTokenDeliveryMode = clientOIDC.getBackchannelTokenDeliveryMode();
+        if (backchannelTokenDeliveryMode != null) {
+            if(isSupportedBackchannelTokenDeliveryMode(backchannelTokenDeliveryMode)) {
+                Map<String, String> attr = Optional.ofNullable(client.getAttributes()).orElse(new HashMap<>());
+                attr.put(CibaConfig.CIBA_BACKCHANNEL_TOKEN_DELIVERY_MODE_PER_CLIENT, backchannelTokenDeliveryMode);
+                client.setAttributes(attr);
+            } else {
+                throw new ClientRegistrationException("Unsupported requested backchannel_token_delivery_mode");
+            }
+        }
+
         return client;
     }
 
+    private static void setOidcCibaGrantEnabled(ClientRepresentation client, Boolean isEnabled) {
+        if (isEnabled == null) return;
+        Map<String, String> attributes = Optional.ofNullable(client.getAttributes()).orElse(new HashMap<>());
+        attributes.put(CibaConfig.OIDC_CIBA_GRANT_ENABLED, isEnabled.toString());
+        client.setAttributes(attributes);
+    }
+
+    private static boolean isSupportedBackchannelTokenDeliveryMode(String mode) {
+        if (mode.equals(CibaConfig.DEFAULT_CIBA_POLICY_TOKEN_DELIVERY_MODE)) return true;
+        return false;
+    }
 
     private static boolean setPublicKey(OIDCClientRepresentation clientOIDC, ClientRepresentation clientRep) {
         if (clientOIDC.getJwksUri() == null && clientOIDC.getJwks() == null) {
@@ -177,10 +242,14 @@ public class DescriptionConverter {
         OIDCClientRepresentation response = new OIDCClientRepresentation();
         response.setClientId(client.getClientId());
 
-        ClientAuthenticatorFactory clientAuth = (ClientAuthenticatorFactory) session.getKeycloakSessionFactory().getProviderFactory(ClientAuthenticator.class, client.getClientAuthenticatorType());
-        Set<String> oidcClientAuthMethods = clientAuth.getProtocolAuthenticatorMethods(OIDCLoginProtocol.LOGIN_PROTOCOL);
-        if (oidcClientAuthMethods != null && !oidcClientAuthMethods.isEmpty()) {
-            response.setTokenEndpointAuthMethod(oidcClientAuthMethods.iterator().next());
+        if ("none".equals(client.getClientAuthenticatorType())) {
+            response.setTokenEndpointAuthMethod("none");
+        } else {
+            ClientAuthenticatorFactory clientAuth = (ClientAuthenticatorFactory) session.getKeycloakSessionFactory().getProviderFactory(ClientAuthenticator.class, client.getClientAuthenticatorType());
+            Set<String> oidcClientAuthMethods = clientAuth.getProtocolAuthenticatorMethods(OIDCLoginProtocol.LOGIN_PROTOCOL);
+            if (oidcClientAuthMethods != null && !oidcClientAuthMethods.isEmpty()) {
+                response.setTokenEndpointAuthMethod(oidcClientAuthMethods.iterator().next());
+            }
         }
 
         if (client.getClientAuthenticatorType().equals(ClientIdAndSecretAuthenticator.PROVIDER_ID)) {
@@ -195,6 +264,9 @@ public class DescriptionConverter {
         response.setRegistrationClientUri(uri.toString());
         response.setResponseTypes(getOIDCResponseTypes(client));
         response.setGrantTypes(getOIDCGrantTypes(client));
+
+        List<String> scopes = client.getOptionalClientScopes();
+        if (scopes != null) response.setScope(scopes.stream().collect(Collectors.joining(" ")));
 
         OIDCAdvancedConfigWrapper config = OIDCAdvancedConfigWrapper.fromClientRepresentation(client);
         if (config.isUserInfoSignatureRequired()) {
@@ -213,6 +285,9 @@ public class DescriptionConverter {
         } else {
             response.setTlsClientCertificateBoundAccessTokens(Boolean.FALSE);
         }
+        if (config.getTlsClientAuthSubjectDn() != null) {
+            response.setTlsClientAuthSubjectDn(config.getTlsClientAuthSubjectDn());
+        }
         if (config.getIdTokenSignedResponseAlg() != null) {
             response.setIdTokenSignedResponseAlg(config.getIdTokenSignedResponseAlg());
         }
@@ -221,6 +296,22 @@ public class DescriptionConverter {
         }
         if (config.getIdTokenEncryptedResponseEnc() != null) {
             response.setIdTokenEncryptedResponseEnc(config.getIdTokenEncryptedResponseEnc());
+        }
+        if (config.getRequestUris() != null) {
+            response.setRequestUris(config.getRequestUris());
+        }
+        if (config.getTokenEndpointAuthSigningAlg() != null) {
+            response.setTokenEndpointAuthSigningAlg(config.getTokenEndpointAuthSigningAlg());
+        }
+        response.setBackchannelLogoutUri(config.getBackchannelLogoutUrl());
+        response.setBackchannelLogoutSessionRequired(config.isBackchannelLogoutSessionRequired());
+        response.setBackchannelLogoutSessionRequired(config.getBackchannelLogoutRevokeOfflineTokens());
+
+        if (client.getAttributes() != null) {
+            String mode = client.getAttributes().get(CibaConfig.CIBA_BACKCHANNEL_TOKEN_DELIVERY_MODE_PER_CLIENT);
+            if (StringUtil.isNotBlank(mode)) {
+                response.setBackchannelTokenDeliveryMode(mode);
+            }
         }
 
         List<ProtocolMapperRepresentation> foundPairwiseMappers = PairwiseSubMapperUtils.getPairwiseSubMappers(client);
@@ -267,10 +358,20 @@ public class DescriptionConverter {
         if (client.isServiceAccountsEnabled()) {
             grantTypes.add(OAuth2Constants.CLIENT_CREDENTIALS);
         }
+        boolean oauth2DeviceEnabled = client.getAttributes() != null && Boolean.parseBoolean(client.getAttributes().get(OAUTH2_DEVICE_AUTHORIZATION_GRANT_ENABLED));
+        if (oauth2DeviceEnabled) {
+            grantTypes.add(OAuth2Constants.DEVICE_CODE_GRANT_TYPE);
+        }
+        boolean oidcCibaEnabled = client.getAttributes() != null && Boolean.parseBoolean(client.getAttributes().get(OIDC_CIBA_GRANT_ENABLED));
+        if (oidcCibaEnabled) {
+            grantTypes.add(OAuth2Constants.CIBA_GRANT_TYPE);
+        }
         if (client.getAuthorizationServicesEnabled() != null && client.getAuthorizationServicesEnabled()) {
             grantTypes.add(OAuth2Constants.UMA_GRANT_TYPE);
         }
-        grantTypes.add(OAuth2Constants.REFRESH_TOKEN);
+        if (OIDCAdvancedConfigWrapper.fromClientRepresentation(client).isUseRefreshToken()) {
+            grantTypes.add(OAuth2Constants.REFRESH_TOKEN);
+        }
         return grantTypes;
     }
 

@@ -32,7 +32,7 @@ import static org.keycloak.testsuite.util.UIUtils.getTextFromElement;
  * @author Vaclav Muzikar <vmuzikar@redhat.com>
  */
 public class SigningInPage extends AbstractLoggedInPage {
-    public static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("MMMM d, yyyy h:mm a", Locale.ENGLISH);
+    public static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("MMMM d, yyyy, h:mm a", Locale.ENGLISH);
 
     private static final String CATEG_TITLE = "-categ-title";
 
@@ -91,6 +91,7 @@ public class SigningInPage extends AbstractLoggedInPage {
 
         public boolean isSetUp() {
             boolean notSetUpLabelPresent;
+
             try {
                 notSetUpLabelPresent = getItemElement(NOT_SET_UP).isDisplayed();
             }
@@ -112,24 +113,30 @@ public class SigningInPage extends AbstractLoggedInPage {
         }
 
         public void clickSetUpLink() {
-            clickSetUpLink(false);
-        }
-
-        public void clickSetUpLink(boolean skipWaits) {
-            WebElement element = getItemElement(SET_UP);
-            if (skipWaits) {
-                // this is for the very special case of registering webauthn; chromedriver doesn't seem to like requesting
-                // getCurrentUrl during security key registration
-                element.click();
-            }
-            else {
-                clickLink(element);
-            }
+            clickLink(getItemElement(SET_UP));
         }
 
         public boolean isSetUpLinkVisible() {
             try {
                 return getItemElement(SET_UP).isDisplayed();
+            }
+            catch (NoSuchElementException e) {
+                return false;
+            }
+        }
+
+        public boolean isNotSetUpLabelVisible() {
+            try {
+                return getItemElement(NOT_SET_UP).isDisplayed();
+            }
+            catch (NoSuchElementException e) {
+                return false;
+            }
+        }
+
+        public boolean isTitleVisible() {
+            try {
+                return getItemElement(TITLE).isDisplayed();
             }
             catch (NoSuchElementException e) {
                 return false;
@@ -192,8 +199,20 @@ public class SigningInPage extends AbstractLoggedInPage {
             return getTextFromItem(LABEL);
         }
 
+        public boolean hasCreatedAt() {
+            boolean result = false;
+            try {
+                result = getItemElement(CREATED_AT).isDisplayed();
+            } catch (NoSuchElementException e) {}
+
+            return result;
+        }
+
         public String getCreatedAtStr() {
-            return getTextFromItem(CREATED_AT).split("Created: ")[1];
+            String lastCreatedAtText = getTextFromElement(
+                    driver.findElement(By.cssSelector("[id*='" + CREATED_AT + "'] strong")));
+
+            return getTextFromItem(CREATED_AT).substring(lastCreatedAtText.length()).trim();
         }
 
         public LocalDateTime getCreatedAt() {

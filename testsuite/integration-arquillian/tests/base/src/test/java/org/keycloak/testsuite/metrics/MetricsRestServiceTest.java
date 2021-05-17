@@ -18,15 +18,16 @@ package org.keycloak.testsuite.metrics;
 
 import java.util.List;
 import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.keycloak.common.Profile;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractKeycloakTest;
+import org.keycloak.testsuite.util.AdminClientUtil;
 import org.keycloak.testsuite.util.ContainerAssume;
 
 import static org.hamcrest.Matchers.containsString;
@@ -46,15 +47,21 @@ public class MetricsRestServiceTest extends AbstractKeycloakTest {
     @BeforeClass
     public static void enabled() {
         ContainerAssume.assumeNotAuthServerUndertow();
+        ContainerAssume.assumeNotAuthServerQuarkus();
     }
 
     @Test
     public void testHealthEndpoint() {
-        Client client = ClientBuilder.newClient();
+        Client client = AdminClientUtil.createResteasyClient();
+        final String serverReportedRunningPerMicroProfileHealthSubsystem = "{\"status\":\"UP\",\"checks\":[{";
+        final String serverReportedRunningPerWildflyHealthSubsystem = "{\"name\" : \"server-state\", \"outcome\" : true, \"data\" : [{ \"value\" : \"running\" }]}";
+
+        // Post upgrade to Wildfly 22 expect output of Wildfly subsystem for health for community builds, and output of MicroProfile health subsystem for product builds
+        final String expectedString = Profile.getName().equals("community") ? serverReportedRunningPerWildflyHealthSubsystem : serverReportedRunningPerMicroProfileHealthSubsystem;
 
         try (Response response = client.target("http://" + MGMT_HOST + ":" + MGMT_PORT + "/health").request().get()) {
             Assert.assertThat(response, statusCodeIs(Status.OK));
-            Assert.assertThat(response, body(containsString("{\"status\":\"UP\",\"checks\":[]}")));
+            Assert.assertThat(response, body(containsString(expectedString)));
         } finally {
             client.close();
         }
@@ -62,7 +69,7 @@ public class MetricsRestServiceTest extends AbstractKeycloakTest {
 
     @Test
     public void  testMetricsEndpoint() {
-        Client client = ClientBuilder.newClient();
+        Client client = AdminClientUtil.createResteasyClient();
 
         try (Response response = client.target("http://" + MGMT_HOST + ":" + MGMT_PORT + "/metrics").request().get()) {
             Assert.assertThat(response, statusCodeIs(Status.OK));

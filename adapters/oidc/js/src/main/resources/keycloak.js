@@ -18,9 +18,9 @@
 (function(root, factory) {
     if ( typeof exports === 'object' ) {
         if ( typeof module === 'object' ) {
-            module.exports = factory( require("js-sha256"), require("base64-js") );    
+            module.exports = factory( require("js-sha256"), require("base64-js") );
         } else {
-            exports["keycloak"] = factory( require("js-sha256"), require("base64-js") );    
+            exports["keycloak"] = factory( require("js-sha256"), require("base64-js") );
         }
     } else {
         /**
@@ -36,7 +36,7 @@
         /**
          * [base64-js]{@link https://github.com/beatgammit/base64-js}
          *
-         * @version v1.3.0 
+         * @version v1.3.0
          * @author Kirill, Fomichev
          * @copyright Kirill, Fomichev 2014
          * @license MIT
@@ -46,7 +46,7 @@
         /**
          * [promise-polyfill]{@link https://github.com/taylorhakes/promise-polyfill}
          *
-         * @version v8.1.3 
+         * @version v8.1.3
          * @author Hakes, Taylor
          * @copyright Hakes, Taylor 2014
          * @license MIT
@@ -56,7 +56,7 @@
         var Keycloak = factory( root["sha256"], root["base64js"] );
         root["Keycloak"] = Keycloak;
 
-        if ( typeof define === "function" && define.amd ) { 
+        if ( typeof define === "function" && define.amd ) {
             define( "keycloak", [], function () { return Keycloak; } );
         }
     }
@@ -73,38 +73,6 @@
             console.warn('[KEYCLOAK] Usage of legacy style promise methods such as `.error()` and `.success()` has been deprecated and support will be removed in future versions. Use standard style promise methods such as `.then() and `.catch()` instead.');
         }
     }
-
-    function toKeycloakPromise(promise) {
-        promise.__proto__ = KeycloakPromise.prototype;
-        return promise;
-    }
-
-    function KeycloakPromise(executor) {
-        return toKeycloakPromise(new Promise(executor));
-    }
-
-    KeycloakPromise.prototype = Object.create(Promise.prototype);
-    KeycloakPromise.prototype.constructor = KeycloakPromise;
-
-    KeycloakPromise.prototype.success = function(callback) {
-        logPromiseDeprecation();
-
-        var promise = this.then(function handleSuccess(value) {
-            callback(value);
-        });
-        
-        return toKeycloakPromise(promise);
-    };
-
-    KeycloakPromise.prototype.error = function(callback) {
-        logPromiseDeprecation();
-
-        var promise = this.catch(function handleError(error) {
-            callback(error);
-        });
-
-        return toKeycloakPromise(promise);
-    };
 
     function Keycloak (config) {
         if (!(this instanceof Keycloak)) {
@@ -132,7 +100,7 @@
         var useNonce = true;
         var logInfo = createLogger(console.info);
         var logWarn = createLogger(console.warn);
-        
+
         kc.init = function (initOptions) {
             kc.authenticated = false;
 
@@ -205,6 +173,12 @@
                     kc.silentCheckSsoRedirectUri = initOptions.silentCheckSsoRedirectUri;
                 }
 
+                if (typeof initOptions.silentCheckSsoFallback === 'boolean') {
+                    kc.silentCheckSsoFallback = initOptions.silentCheckSsoFallback;
+                } else {
+                    kc.silentCheckSsoFallback = true;
+                }
+
                 if (initOptions.pkceMethod) {
                     if (initOptions.pkceMethod !== "S256") {
                         throw 'Invalid value for pkceMethod';
@@ -216,6 +190,10 @@
                     kc.enableLogging = initOptions.enableLogging;
                 } else {
                     kc.enableLogging = false;
+                }
+
+                if (typeof initOptions.scope === 'string') {
+                    kc.scope = initOptions.scope;
                 }
             }
 
@@ -356,7 +334,28 @@
                 }
             }
 
-            configPromise.then(processInit);
+            function domReady() {
+                var promise = createPromise();
+
+                var checkReadyState = function () {
+                    if (document.readyState === 'interactive' || document.readyState === 'complete') {
+                        document.removeEventListener('readystatechange', checkReadyState);
+                        promise.setSuccess();
+                    }
+                }
+                document.addEventListener('readystatechange', checkReadyState);
+
+                checkReadyState(); // just in case the event was already fired and we missed it (in case the init is done later than at the load time, i.e. it's done from code)
+
+                return promise.promise;
+            }
+
+            configPromise.then(function () {
+                domReady().then(check3pCookiesSupported).then(processInit)
+                .catch(function() {
+                    promise.setError();
+                });
+            });
             configPromise.catch(function() {
                 promise.setError();
             });
@@ -438,15 +437,13 @@
                 baseUrl = kc.endpoints.authorize();
             }
 
-            var scope;
-            if (options && options.scope) {
-                if (options.scope.indexOf("openid") != -1) {
-                    scope = options.scope;
-                } else {
-                    scope = "openid " + options.scope;
-                }
-            } else {
+            var scope = options && options.scope || kc.scope;
+            if (!scope) {
+                // if scope is not set, default to "openid"
                 scope = "openid";
+            } else if (scope.indexOf("openid") === -1) {
+                // if openid scope is missing, prefix the given scopes with it
+                scope = "openid " + scope;
             }
 
             var url = baseUrl
@@ -474,6 +471,10 @@
 
             if (options && options.idpHint) {
                 url += '&kc_idp_hint=' + encodeURIComponent(options.idpHint);
+            }
+
+            if (options && options.action && options.action != 'register') {
+                url += '&kc_action=' + encodeURIComponent(options.action);
             }
 
             if (options && options.locale) {
@@ -740,6 +741,10 @@
 
             var timeLocal = new Date().getTime();
 
+            if (oauth['kc_action_status']) {
+                kc.onActionUpdate && kc.onActionUpdate(oauth['kc_action_status']);
+            }
+
             if (error) {
                 if (prompt != 'none') {
                     var errorData = { error: error, error_description: oauth.error_description };
@@ -835,6 +840,13 @@
                             var src = getRealmUrl() + '/protocol/openid-connect/login-status-iframe.html';
                             if (kc.iframeVersion) {
                               src = src + '?version=' + kc.iframeVersion;
+                            }
+                            return src;
+                        },
+                        thirdPartyCookiesIframe: function() {
+                            var src = getRealmUrl() + '/protocol/openid-connect/3p-cookies/step1.html';
+                            if (kc.iframeVersion) {
+                                src = src + '?version=' + kc.iframeVersion;
                             }
                             return src;
                         },
@@ -1027,10 +1039,9 @@
         function decodeToken(str) {
             str = str.split('.')[1];
 
-            str = str.replace('/-/g', '+');
-            str = str.replace('/_/g', '/');
-            switch (str.length % 4)
-            {
+            str = str.replace(/-/g, '+');
+            str = str.replace(/_/g, '/');
+            switch (str.length % 4) {
                 case 0:
                     break;
                 case 2:
@@ -1042,9 +1053,6 @@
                 default:
                     throw 'Invalid token';
             }
-
-            str = (str + '===').slice(0, str.length + (str.length % 4));
-            str = str.replace(/-/g, '+').replace(/_/g, '/');
 
             str = decodeURIComponent(escape(atob(str)));
 
@@ -1085,13 +1093,13 @@
             var supportedParams;
             switch (kc.flow) {
                 case 'standard':
-                    supportedParams = ['code', 'state', 'session_state'];
+                    supportedParams = ['code', 'state', 'session_state', 'kc_action_status'];
                     break;
                 case 'implicit':
-                    supportedParams = ['access_token', 'token_type', 'id_token', 'state', 'session_state', 'expires_in'];
+                    supportedParams = ['access_token', 'token_type', 'id_token', 'state', 'session_state', 'expires_in', 'kc_action_status'];
                     break;
                 case 'hybrid':
-                    supportedParams = ['access_token', 'id_token', 'code', 'state', 'session_state'];
+                    supportedParams = ['access_token', 'token_type', 'id_token', 'code', 'state', 'session_state', 'expires_in', 'kc_action_status'];
                     break;
             }
 
@@ -1170,10 +1178,31 @@
                     p.reject(result);
                 }
             };
-            p.promise = new KeycloakPromise(function(resolve, reject) {
+            p.promise = new Promise(function(resolve, reject) {
                 p.resolve = resolve;
                 p.reject = reject;
             });
+
+            p.promise.success = function(callback) {
+                logPromiseDeprecation();
+
+                this.then(function handleSuccess(value) {
+                    callback(value);
+                });
+
+                return this;
+            }
+
+            p.promise.error = function(callback) {
+                logPromiseDeprecation();
+
+                this.catch(function handleError(error) {
+                    callback(error);
+                });
+
+                return this;
+            }
+
             return p;
         }
 
@@ -1265,6 +1294,45 @@
                 if (loginIframe.callbackList.length == 1) {
                     loginIframe.iframe.contentWindow.postMessage(msg, origin);
                 }
+            } else {
+                promise.setSuccess();
+            }
+
+            return promise.promise;
+        }
+
+        function check3pCookiesSupported() {
+            var promise = createPromise();
+
+            if (loginIframe.enable || kc.silentCheckSsoRedirectUri) {
+                var iframe = document.createElement('iframe');
+                iframe.setAttribute('src', kc.endpoints.thirdPartyCookiesIframe());
+                iframe.setAttribute('title', 'keycloak-3p-check-iframe' );
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+
+                var messageCallback = function(event) {
+                    if (iframe.contentWindow !== event.source) {
+                        return;
+                    }
+
+                    if (event.data !== "supported" && event.data !== "unsupported") {
+                        return;
+                    } else if (event.data === "unsupported") {
+                        loginIframe.enable = false;
+                        if (kc.silentCheckSsoFallback) {
+                            kc.silentCheckSsoRedirectUri = false;
+                        }
+                        logWarn("[KEYCLOAK] 3rd party cookies aren't supported by this browser. checkLoginIframe and " +
+                            "silent check-sso are not available.")
+                    }
+
+                    document.body.removeChild(iframe);
+                    window.removeEventListener("message", messageCallback);
+                    promise.setSuccess();
+                };
+
+                window.addEventListener('message', messageCallback, false);
             } else {
                 promise.setSuccess();
             }

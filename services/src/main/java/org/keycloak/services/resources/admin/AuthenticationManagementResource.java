@@ -69,9 +69,15 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static javax.ws.rs.core.Response.Status.NOT_FOUND;
+import org.keycloak.utils.ReservedCharValidator;
 
 /**
  * @resource Authentication Management
@@ -96,102 +102,90 @@ public class AuthenticationManagementResource {
     /**
      * Get form providers
      *
-     * Returns a list of form providers.
+     * Returns a stream of form providers.
      */
     @Path("/form-providers")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<Map<String, Object>> getFormProviders() {
+    public Stream<Map<String, Object>> getFormProviders() {
         auth.realm().requireViewRealm();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(FormAuthenticator.class);
-        return buildProviderMetadata(factories);
+        return buildProviderMetadata(session.getKeycloakSessionFactory().getProviderFactoriesStream(FormAuthenticator.class));
     }
 
     /**
      * Get authenticator providers
      *
-     * Returns a list of authenticator providers.
+     * Returns a stream of authenticator providers.
      */
     @Path("/authenticator-providers")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<Map<String, Object>> getAuthenticatorProviders() {
+    public Stream<Map<String, Object>> getAuthenticatorProviders() {
         auth.realm().requireViewRealm();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(Authenticator.class);
-        return buildProviderMetadata(factories);
+        return buildProviderMetadata(session.getKeycloakSessionFactory().getProviderFactoriesStream(Authenticator.class));
     }
 
     /**
      * Get client authenticator providers
      *
-     * Returns a list of client authenticator providers.
+     * Returns a stream of client authenticator providers.
      */
     @Path("/client-authenticator-providers")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<Map<String, Object>> getClientAuthenticatorProviders() {
+    public Stream<Map<String, Object>> getClientAuthenticatorProviders() {
         auth.realm().requireViewClientAuthenticatorProviders();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(ClientAuthenticator.class);
-        return buildProviderMetadata(factories);
+        return buildProviderMetadata(session.getKeycloakSessionFactory().getProviderFactoriesStream(ClientAuthenticator.class));
     }
 
-    public List<Map<String, Object>> buildProviderMetadata(List<ProviderFactory> factories) {
-        List<Map<String, Object>> providers = new LinkedList<>();
-        for (ProviderFactory factory : factories) {
+    public Stream<Map<String, Object>> buildProviderMetadata(Stream<ProviderFactory> factories) {
+        return factories.map(factory -> {
             Map<String, Object> data = new HashMap<>();
             data.put("id", factory.getId());
             ConfigurableAuthenticatorFactory configured = (ConfigurableAuthenticatorFactory)factory;
             data.put("description", configured.getHelpText());
             data.put("displayName", configured.getDisplayType());
-
-            providers.add(data);
-        }
-        return providers;
+            return data;
+        });
     }
 
     /**
      * Get form action providers
      *
-     * Returns a list of form action providers.
+     * Returns a stream of form action providers.
      */
     @Path("/form-action-providers")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<Map<String, Object>> getFormActionProviders() {
+    public Stream<Map<String, Object>> getFormActionProviders() {
         auth.realm().requireViewRealm();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(FormAction.class);
-        return buildProviderMetadata(factories);
+        return buildProviderMetadata(session.getKeycloakSessionFactory().getProviderFactoriesStream(FormAction.class));
     }
 
 
     /**
      * Get authentication flows
      *
-     * Returns a list of authentication flows.
+     * Returns a stream of authentication flows.
      */
     @Path("/flows")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<AuthenticationFlowRepresentation> getFlows() {
+    public Stream<AuthenticationFlowRepresentation> getFlows() {
         auth.realm().requireViewAuthenticationFlows();
 
-        List<AuthenticationFlowRepresentation> flows = new LinkedList<>();
-        for (AuthenticationFlowModel flow : realm.getAuthenticationFlows()) {
-            // KEYCLOAK-3517, we need a better way to filter non-configurable internal flows
-            if (flow.isTopLevel() && !flow.getAlias().equals(DefaultAuthenticationFlows.SAML_ECP_FLOW)) {
-                flows.add(ModelToRepresentation.toRepresentation(realm, flow));
-            }
-        }
-        return flows;
+        return realm.getAuthenticationFlowsStream()
+                .filter(flow -> flow.isTopLevel() && !Objects.equals(flow.getAlias(), DefaultAuthenticationFlows.SAML_ECP_FLOW))
+                .map(flow -> ModelToRepresentation.toRepresentation(realm, flow));
     }
 
     /**
@@ -214,6 +208,8 @@ public class AuthenticationManagementResource {
         if (realm.getFlowByAlias(flow.getAlias()) != null) {
             return ErrorResponse.exists("Flow " + flow.getAlias() + " already exists");
         }
+        
+        ReservedCharValidator.validate(flow.getAlias());
 
         AuthenticationFlowModel createdModel = realm.addAuthenticationFlow(RepresentationToModel.toModel(flow));
 
@@ -252,6 +248,7 @@ public class AuthenticationManagementResource {
     @PUT
     @NoCache
     @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
     public Response updateFlow(@PathParam("id") String id, AuthenticationFlowRepresentation flow) {
         auth.realm().requireManageRealm();
 
@@ -261,10 +258,36 @@ public class AuthenticationManagementResource {
             return ErrorResponse.exists("Failed to update flow with empty alias name");
         }
 
+        //check if updating a correct flow
+        AuthenticationFlowModel checkFlow = realm.getAuthenticationFlowById(id);
+        if (checkFlow == null) {
+            session.getTransactionManager().setRollbackOnly();
+            throw new NotFoundException("Illegal execution");
+        }
+
+        //if a different flow with the same name does already exist, throw an exception
+        if (realm.getFlowByAlias(flow.getAlias()) != null && !checkFlow.getAlias().equals(flow.getAlias())) {
+            return ErrorResponse.exists("Flow alias name already exists");
+        }
+
+        //if the name changed
+        if (checkFlow.getAlias() != null && !checkFlow.getAlias().equals(flow.getAlias())) {
+            checkFlow.setAlias(flow.getAlias());
+        } else if (checkFlow.getAlias() == null && flow.getAlias() != null) {
+            checkFlow.setAlias(flow.getAlias());
+	}
+
+        //check if the description changed
+        if (checkFlow.getDescription() != null && !checkFlow.getDescription().equals(flow.getDescription())) {
+            checkFlow.setDescription(flow.getDescription());
+        } else if (checkFlow.getDescription() == null && flow.getDescription() != null) {
+            checkFlow.setDescription(flow.getDescription());
+	}
+
+        //update the flow
         flow.setId(existingFlow.getId());
         realm.updateAuthenticationFlow(RepresentationToModel.toModel(flow));
         adminEvent.operation(OperationType.UPDATE).resourcePath(session.getContext().getUri()).representation(flow).success();
-
         return Response.accepted(flow).build();
     }
 
@@ -291,12 +314,11 @@ public class AuthenticationManagementResource {
             throw new BadRequestException("Can't delete built in flow");
         }
         
-        List<AuthenticationExecutionModel> executions = realm.getAuthenticationExecutions(id);
-        for (AuthenticationExecutionModel execution : executions) {
-            if(execution.getFlowId() != null) {
-                deleteFlow(execution.getFlowId(), false);
-            }
-        }
+        realm.getAuthenticationExecutionsStream(id)
+                .map(AuthenticationExecutionModel::getFlowId)
+                .filter(Objects::nonNull)
+                .forEachOrdered(flowId -> deleteFlow(flowId, false));
+
         realm.removeAuthenticationFlow(flow);
 
         // Use just one event for top-level flow. Using separate events won't work properly for flows of depth 2 or bigger
@@ -350,7 +372,7 @@ public class AuthenticationManagementResource {
     }
 
     public static void copy(RealmModel realm, String newName, AuthenticationFlowModel from, AuthenticationFlowModel to) {
-        for (AuthenticationExecutionModel execution : realm.getAuthenticationExecutions(from.getId())) {
+        realm.getAuthenticationExecutionsStream(from.getId()).forEachOrdered(execution -> {
             if (execution.isAuthenticatorFlow()) {
                 AuthenticationFlowModel subFlow = realm.getAuthenticationFlowById(execution.getFlowId());
                 AuthenticationFlowModel copy = new AuthenticationFlowModel();
@@ -366,7 +388,7 @@ public class AuthenticationManagementResource {
             execution.setId(null);
             execution.setParentFlow(to.getId());
             realm.addAuthenticatorExecution(execution);
-        }
+        });
     }
 
     /**
@@ -384,7 +406,7 @@ public class AuthenticationManagementResource {
 
         AuthenticationFlowModel parentFlow = realm.getFlowByAlias(flowAlias);
         if (parentFlow == null) {
-            return ErrorResponse.error("Parent flow doesn't exists", Response.Status.BAD_REQUEST);
+            return ErrorResponse.error("Parent flow doesn't exist", Response.Status.BAD_REQUEST);
         }
         String alias = data.get("alias");
         String type = data.get("type");
@@ -406,7 +428,9 @@ public class AuthenticationManagementResource {
         execution.setFlowId(newFlow.getId());
         execution.setRequirement(AuthenticationExecutionModel.Requirement.DISABLED);
         execution.setAuthenticatorFlow(true);
-        execution.setAuthenticator(provider);
+        if (type.equals("form-flow")) {
+            execution.setAuthenticator(provider);
+        }
         execution.setPriority(getNextPriority(parentFlow));
         execution = realm.addAuthenticatorExecution(execution);
 
@@ -418,7 +442,8 @@ public class AuthenticationManagementResource {
     }
 
     private int getNextPriority(AuthenticationFlowModel parentFlow) {
-        List<AuthenticationExecutionModel> executions = getSortedExecutions(parentFlow);
+        List<AuthenticationExecutionModel> executions = realm.getAuthenticationExecutionsStream(parentFlow.getId())
+                .collect(Collectors.toList());
         return executions.isEmpty() ? 0 : executions.get(executions.size() - 1).getPriority() + 1;
     }
 
@@ -437,7 +462,7 @@ public class AuthenticationManagementResource {
 
         AuthenticationFlowModel parentFlow = realm.getFlowByAlias(flowAlias);
         if (parentFlow == null) {
-            throw new BadRequestException("Parent flow doesn't exists");
+            throw new BadRequestException("Parent flow doesn't exist");
         }
         if (parentFlow.isBuiltIn()) {
             throw new BadRequestException("It is illegal to add execution to a built in flow");
@@ -505,13 +530,12 @@ public class AuthenticationManagementResource {
     }
 
     public void recurseExecutions(AuthenticationFlowModel flow, List<AuthenticationExecutionInfoRepresentation> result, int level) {
-        int index = 0;
-        List<AuthenticationExecutionModel> executions = realm.getAuthenticationExecutions(flow.getId());
-        for (AuthenticationExecutionModel execution : executions) {
+        AtomicInteger index = new AtomicInteger(0);
+        realm.getAuthenticationExecutionsStream(flow.getId()).forEachOrdered(execution -> {
             AuthenticationExecutionInfoRepresentation rep = new AuthenticationExecutionInfoRepresentation();
             rep.setLevel(level);
-            rep.setIndex(index++);
-            rep.setRequirementChoices(new LinkedList<String>());
+            rep.setIndex(index.getAndIncrement());
+            rep.setRequirementChoices(new LinkedList<>());
             if (execution.isAuthenticatorFlow()) {
                 AuthenticationFlowModel flowRef = realm.getAuthenticationFlowById(execution.getFlowId());
                 if (AuthenticationFlow.BASIC_FLOW.equals(flowRef.getProviderId())) {
@@ -530,6 +554,7 @@ public class AuthenticationManagementResource {
                     rep.getRequirementChoices().add(AuthenticationExecutionModel.Requirement.DISABLED.name());
                 }
                 rep.setDisplayName(flowRef.getAlias());
+                rep.setDescription(flowRef.getDescription());
                 rep.setConfigurable(false);
                 rep.setId(execution.getId());
                 rep.setAuthenticationFlow(execution.isAuthenticatorFlow());
@@ -564,20 +589,20 @@ public class AuthenticationManagementResource {
                 rep.setAuthenticationConfig(execution.getAuthenticatorConfig());
                 result.add(rep);
             }
-        }
+        });
     }
 
     /**
-     * Update authentication executions of a flow
-     *
+     * Update authentication executions of a Flow
      * @param flowAlias Flow alias
-     * @param rep
+     * @param rep AuthenticationExecutionInfoRepresentation
      */
     @Path("/flows/{flowAlias}/executions")
     @PUT
     @NoCache
+    @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public void updateExecutions(@PathParam("flowAlias") String flowAlias, AuthenticationExecutionInfoRepresentation rep) {
+    public Response updateExecutions(@PathParam("flowAlias") String flowAlias, AuthenticationExecutionInfoRepresentation rep) {
         auth.realm().requireManageRealm();
 
         AuthenticationFlowModel flow = realm.getFlowByAlias(flowAlias);
@@ -596,7 +621,38 @@ public class AuthenticationManagementResource {
             model.setRequirement(AuthenticationExecutionModel.Requirement.valueOf(rep.getRequirement()));
             realm.updateAuthenticatorExecution(model);
             adminEvent.operation(OperationType.UPDATE).resource(ResourceType.AUTH_EXECUTION).resourcePath(session.getContext().getUri()).representation(rep).success();
+            return Response.accepted(flow).build();
         }
+
+        //executions can't have name and description updated
+        if (rep.getAuthenticationFlow() == null) { return Response.accepted(flow).build();}
+
+        //check if updating a correct flow
+        AuthenticationFlowModel checkFlow = realm.getAuthenticationFlowById(rep.getFlowId());
+        if (checkFlow == null) {
+            session.getTransactionManager().setRollbackOnly();
+            throw new NotFoundException("Illegal execution");
+        }
+
+        //if a different flow with the same name does already exist, throw an exception
+        if (realm.getFlowByAlias(rep.getDisplayName()) != null && !checkFlow.getAlias().equals(rep.getDisplayName())) {
+            return ErrorResponse.exists("Flow alias name already exists");
+        }
+
+        //if the name changed
+        if (!checkFlow.getAlias().equals(rep.getDisplayName())) {
+            checkFlow.setAlias(rep.getDisplayName());
+        }
+
+        //check if the description changed
+        if (!checkFlow.getDescription().equals(rep.getDescription())) {
+            checkFlow.setDescription(rep.getDescription());
+        }
+
+        //update the flow
+        realm.updateAuthenticationFlow(checkFlow);
+        adminEvent.operation(OperationType.UPDATE).resource(ResourceType.AUTH_EXECUTION).resourcePath(session.getContext().getUri()).representation(rep).success();
+        return Response.accepted(flow).build();
     }
 
     /**
@@ -677,9 +733,9 @@ public class AuthenticationManagementResource {
         if (parentFlow.isBuiltIn()) {
             throw new BadRequestException("It is illegal to modify execution in a built in flow");
         }
-        List<AuthenticationExecutionModel> executions = getSortedExecutions(parentFlow);
+
         AuthenticationExecutionModel previous = null;
-        for (AuthenticationExecutionModel exe : executions) {
+        for (AuthenticationExecutionModel exe : realm.getAuthenticationExecutionsStream(parentFlow.getId()).collect(Collectors.toList())) {
             if (exe.getId().equals(model.getId())) {
                 break;
             }
@@ -694,12 +750,6 @@ public class AuthenticationManagementResource {
         realm.updateAuthenticatorExecution(model);
 
         adminEvent.operation(OperationType.UPDATE).resource(ResourceType.AUTH_EXECUTION).resourcePath(session.getContext().getUri()).success();
-    }
-
-    public List<AuthenticationExecutionModel> getSortedExecutions(AuthenticationFlowModel parentFlow) {
-        List<AuthenticationExecutionModel> executions = new LinkedList<>(realm.getAuthenticationExecutions(parentFlow.getId()));
-        Collections.sort(executions, AuthenticationExecutionModel.ExecutionComparator.SINGLETON);
-        return executions;
     }
 
     /**
@@ -723,8 +773,8 @@ public class AuthenticationManagementResource {
         if (parentFlow.isBuiltIn()) {
             throw new BadRequestException("It is illegal to modify execution in a built in flow");
         }
-        List<AuthenticationExecutionModel> executions = getSortedExecutions(parentFlow);
-        int i = 0;
+        List<AuthenticationExecutionModel> executions = realm.getAuthenticationExecutionsStream(parentFlow.getId()).collect(Collectors.toList());
+        int i;
         for (i = 0; i < executions.size(); i++) {
             if (executions.get(i).getId().equals(model.getId())) {
                 break;
@@ -788,6 +838,8 @@ public class AuthenticationManagementResource {
     @Consumes(MediaType.APPLICATION_JSON)
     public Response newExecutionConfig(@PathParam("executionId") String execution, AuthenticatorConfigRepresentation json) {
         auth.realm().requireManageRealm();
+        
+        ReservedCharValidator.validate(json.getAlias());
 
         AuthenticationExecutionModel model = realm.getAuthenticationExecutionById(execution);
         if (model == null) {
@@ -833,35 +885,27 @@ public class AuthenticationManagementResource {
     /**
      * Get unregistered required actions
      *
-     * Returns a list of unregistered required actions.
+     * Returns a stream of unregistered required actions.
      */
     @Path("unregistered-required-actions")
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @NoCache
-    public List<Map<String, String>> getUnregisteredRequiredActions() {
+    public Stream<Map<String, String>> getUnregisteredRequiredActions() {
         auth.realm().requireViewRealm();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(RequiredActionProvider.class);
-        List<Map<String, String>> unregisteredList = new LinkedList<>();
-        for (ProviderFactory factory : factories) {
-            RequiredActionFactory requiredActionFactory = (RequiredActionFactory) factory;
-            boolean found = false;
-            for (RequiredActionProviderModel model : realm.getRequiredActionProviders()) {
-                if (model.getProviderId().equals(factory.getId())) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                Map<String, String> data = new HashMap<>();
-                data.put("name", requiredActionFactory.getDisplayText());
-                data.put("providerId", requiredActionFactory.getId());
-                unregisteredList.add(data);
-            }
+        Set<String> providerIds = realm.getRequiredActionProvidersStream()
+                .map(RequiredActionProviderModel::getProviderId).collect(Collectors.toSet());
 
-        }
-        return unregisteredList;
+        return session.getKeycloakSessionFactory().getProviderFactoriesStream(RequiredActionProvider.class)
+                .filter(factory -> !providerIds.contains(factory.getId()))
+                .map(factory -> {
+                    RequiredActionFactory r = (RequiredActionFactory) factory;
+                    Map<String, String> m = new HashMap<>();
+                    m.put("name", r.getDisplayText());
+                    m.put("providerId", r.getId());
+                    return m;
+                });
     }
 
     /**
@@ -892,7 +936,7 @@ public class AuthenticationManagementResource {
     }
 
     private int getNextRequiredActionPriority() {
-        List<RequiredActionProviderModel> actions = realm.getRequiredActionProviders();
+        List<RequiredActionProviderModel> actions = realm.getRequiredActionProvidersStream().collect(Collectors.toList());
         return actions.isEmpty() ? 0 : actions.get(actions.size() - 1).getPriority() + 1;
     }
 
@@ -900,21 +944,16 @@ public class AuthenticationManagementResource {
     /**
      * Get required actions
      *
-     * Returns a list of required actions.
+     * Returns a stream of required actions.
      */
     @Path("required-actions")
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @NoCache
-    public List<RequiredActionProviderRepresentation> getRequiredActions() {
+    public Stream<RequiredActionProviderRepresentation> getRequiredActions() {
         auth.realm().requireViewRequiredActions();
 
-        List<RequiredActionProviderRepresentation> list = new LinkedList<>();
-        for (RequiredActionProviderModel model : realm.getRequiredActionProviders()) {
-            RequiredActionProviderRepresentation rep = toRepresentation(model);
-            list.add(rep);
-        }
-        return list;
+        return realm.getRequiredActionProvidersStream().map(AuthenticationManagementResource::toRepresentation);
     }
 
     public static RequiredActionProviderRepresentation toRepresentation(RequiredActionProviderModel model) {
@@ -1012,9 +1051,8 @@ public class AuthenticationManagementResource {
             throw new NotFoundException("Failed to find required action.");
         }
 
-        List<RequiredActionProviderModel> actions = realm.getRequiredActionProviders();
         RequiredActionProviderModel previous = null;
-        for (RequiredActionProviderModel action : actions) {
+        for (RequiredActionProviderModel action : realm.getRequiredActionProvidersStream().collect(Collectors.toList())) {
             if (action.getId().equals(model.getId())) {
                 break;
             }
@@ -1046,8 +1084,8 @@ public class AuthenticationManagementResource {
             throw new NotFoundException("Failed to find required action.");
         }
 
-        List<RequiredActionProviderModel> actions = realm.getRequiredActionProviders();
-        int i = 0;
+        List<RequiredActionProviderModel> actions = realm.getRequiredActionProvidersStream().collect(Collectors.toList());
+        int i;
         for (i = 0; i < actions.size(); i++) {
             if (actions.get(i).getId().equals(model.getId())) {
                 break;
@@ -1083,7 +1121,7 @@ public class AuthenticationManagementResource {
         rep.setName(factory.getDisplayType());
         rep.setHelpText(factory.getHelpText());
         rep.setProperties(new LinkedList<>());
-        List<ProviderConfigProperty> configProperties = factory.getConfigProperties();
+        List<ProviderConfigProperty> configProperties = Optional.ofNullable(factory.getConfigProperties()).orElse(Collections.emptyList());
         for (ProviderConfigProperty prop : configProperties) {
             ConfigPropertyRepresentation propRep = getConfigPropertyRep(prop);
             rep.getProperties().add(propRep);
@@ -1105,24 +1143,15 @@ public class AuthenticationManagementResource {
     public Map<String, List<ConfigPropertyRepresentation>> getPerClientConfigDescription() {
         auth.realm().requireViewClientAuthenticatorProviders();
 
-        List<ProviderFactory> factories = session.getKeycloakSessionFactory().getProviderFactories(ClientAuthenticator.class);
-
-        Map<String, List<ConfigPropertyRepresentation>> toReturn = new HashMap<>();
-        for (ProviderFactory clientAuthenticatorFactory : factories) {
-            String providerId = clientAuthenticatorFactory.getId();
-            ConfigurableAuthenticatorFactory factory = CredentialHelper.getConfigurableAuthenticatorFactory(session, providerId);
-            ClientAuthenticatorFactory clientAuthFactory = (ClientAuthenticatorFactory) factory;
-            List<ProviderConfigProperty> perClientConfigProps = clientAuthFactory.getConfigPropertiesPerClient();
-            List<ConfigPropertyRepresentation> result = new LinkedList<>();
-            for (ProviderConfigProperty prop : perClientConfigProps) {
-                ConfigPropertyRepresentation propRep = getConfigPropertyRep(prop);
-                result.add(propRep);
-            }
-
-            toReturn.put(providerId, result);
-        }
-
-        return toReturn;
+        return session.getKeycloakSessionFactory().getProviderFactoriesStream(ClientAuthenticator.class)
+                .collect(Collectors.toMap(
+                        ProviderFactory::getId,
+                        factory -> {
+                            ClientAuthenticatorFactory clientAuthFactory = (ClientAuthenticatorFactory)
+                                    CredentialHelper.getConfigurableAuthenticatorFactory(session, factory.getId());
+                            return clientAuthFactory.getConfigPropertiesPerClient().stream()
+                                    .map(this::getConfigPropertyRep).collect(Collectors.toList());
+                        }));
     }
 
     /**
@@ -1137,6 +1166,8 @@ public class AuthenticationManagementResource {
     public Response createAuthenticatorConfig(AuthenticatorConfigRepresentation rep) {
         auth.realm().requireManageRealm();
 
+        ReservedCharValidator.validate(rep.getAlias());
+        
         AuthenticatorConfigModel config = realm.addAuthenticatorConfig(RepresentationToModel.toModel(rep));
         adminEvent.operation(OperationType.CREATE).resource(ResourceType.AUTHENTICATOR_CONFIG).resourcePath(session.getContext().getUri(), config.getId()).representation(rep).success();
         return Response.created(session.getContext().getUri().getAbsolutePathBuilder().path(config.getId()).build()).build();
@@ -1176,14 +1207,12 @@ public class AuthenticationManagementResource {
             throw new NotFoundException("Could not find authenticator config");
 
         }
-        for (AuthenticationFlowModel flow : realm.getAuthenticationFlows()) {
-            for (AuthenticationExecutionModel exe : realm.getAuthenticationExecutions(flow.getId())) {
-                if (id.equals(exe.getAuthenticatorConfig())) {
+        realm.getAuthenticationFlowsStream().forEach(flow -> realm.getAuthenticationExecutionsStream(flow.getId())
+                .filter(exe -> Objects.equals(id, exe.getAuthenticatorConfig()))
+                .forEachOrdered(exe -> {
                     exe.setAuthenticatorConfig(null);
                     realm.updateAuthenticatorExecution(exe);
-                }
-            }
-        }
+                }));
 
         realm.removeAuthenticatorConfig(config);
 
@@ -1202,11 +1231,12 @@ public class AuthenticationManagementResource {
     public void updateAuthenticatorConfig(@PathParam("id") String id, AuthenticatorConfigRepresentation rep) {
         auth.realm().requireManageRealm();
 
+        ReservedCharValidator.validate(rep.getAlias());
         AuthenticatorConfigModel exists = realm.getAuthenticatorConfigById(id);
         if (exists == null) {
             throw new NotFoundException("Could not find authenticator config");
-
         }
+        
         exists.setAlias(rep.getAlias());
         exists.setConfig(RepresentationToModel.removeEmptyString(rep.getConfig()));
         realm.updateAuthenticatorConfig(exists);

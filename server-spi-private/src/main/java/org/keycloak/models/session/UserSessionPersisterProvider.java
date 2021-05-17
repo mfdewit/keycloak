@@ -26,6 +26,8 @@ import org.keycloak.provider.Provider;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -54,8 +56,26 @@ public interface UserSessionPersisterProvider extends Provider {
     // Remove userSessions and clientSessions, which are expired
     void removeExpired(RealmModel realm);
 
-    // Called during startup. For each userSession, it loads also clientSessions
-    List<UserSessionModel> loadUserSessions(int firstResult, int maxResults, boolean offline, int lastCreatedOn, String lastUserSessionId);
+    /**
+     * Called during startup. For each userSession, it loads also clientSessions
+     * @deprecated Use {@link #loadUserSessionsStream(Integer, Integer, boolean, String) loadUserSessionsStream} instead.
+     */
+    @Deprecated
+    default List<UserSessionModel> loadUserSessions(int firstResult, int maxResults, boolean offline, int lastCreatedOn, String lastUserSessionId) {
+        return loadUserSessionsStream(firstResult, maxResults, offline, lastUserSessionId).collect(Collectors.toList());
+    }
+
+    /**
+     * Called during startup. For each userSession, it loads also clientSessions.
+     * @param firstResult {@code Integer} Index of the first desired user session. Ignored if negative or {@code null}.
+     * @param maxResults {@code Integer} Maximum number of returned user sessions. Ignored if negative or {@code null}.
+     * @param offline {@code boolean} Flag to include offline sessions.
+     * @param lastUserSessionId {@code String} Id of the user session. It will return only user sessions with id's lexicographically greater than this.
+     * it will compare the id in dictionary order and takes only those created later.
+     * @return Stream of {@link UserSessionModel}. Never returns {@code null}.
+     */
+    Stream<UserSessionModel> loadUserSessionsStream(Integer firstResult, Integer maxResults, boolean offline,
+                                                    String lastUserSessionId);
 
     int getUserSessionsCount(boolean offline);
 

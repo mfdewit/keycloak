@@ -18,7 +18,6 @@
 package org.keycloak.testsuite.ui.account2;
 
 import org.jboss.arquillian.graphene.page.Page;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
@@ -38,6 +37,8 @@ import static org.keycloak.testsuite.util.URLAssert.assertCurrentUrlEquals;
 public class ReferrerTest extends AbstractAccountTest {
     public static final String FAKE_CLIENT_ID = "fake-client-name";
     public static final String REFERRER_LINK_TEXT = "Back to " + LOCALE_CLIENT_NAME_LOCALIZED;
+    public static final String FAKE_CLIENT_URL_CONTEXT = "auth/non-existing-page/";
+    public static final String FAKE_CLIENT_URL_FRAGMENT = "?foo=bar&bar=foo#anchor";
 
     @Page
     private WelcomeScreen welcomeScreen;
@@ -53,7 +54,11 @@ public class ReferrerTest extends AbstractAccountTest {
         ClientRepresentation testClient = new ClientRepresentation();
         testClient.setClientId(FAKE_CLIENT_ID);
         testClient.setName(LOCALE_CLIENT_NAME);
-        testClient.setRedirectUris(Collections.singletonList(getFakeClientUrl()));
+
+        // Redirect URIs are no longer allowed to contain a fragment, so we
+        // need the wildcard in order to use fragments in tests
+        testClient.setRedirectUris(Collections.singletonList(getFakeClientUrl("*")));
+
         testClient.setEnabled(true);
 
         testRealm.setClients(Collections.singletonList(testClient));
@@ -61,11 +66,24 @@ public class ReferrerTest extends AbstractAccountTest {
     }
 
     @Test
+    // https://issues.redhat.com/browse/KEYCLOAK-17033
+    // If the referrer is unescaped, this test will throw an exception.
+    // org.openqa.selenium.UnhandledAlertException: unexpected alert open: {Alert text : XSS}
+    public void reflectedXSSTest() {
+        String attackUrl = getFakeClientUrl("'+alert('XSS')+'");
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, attackUrl);
+
+        welcomeScreen.header().clickLoginBtn();
+        loginToAccount();
+        welcomeScreen.clickPersonalInfoLink();
+    }
+
+    @Test
     public void loggedInWelcomeScreenTest() {
         welcomeScreen.header().clickLoginBtn();
         loginToAccount();
 
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         welcomeScreen.header().assertLoginBtnVisible(false);
         welcomeScreen.header().assertLogoutBtnVisible(true);
 
@@ -74,7 +92,7 @@ public class ReferrerTest extends AbstractAccountTest {
 
     @Test
     public void loggedOutWelcomeScreenTest() {
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         welcomeScreen.header().assertLoginBtnVisible(true);
         welcomeScreen.header().assertLogoutBtnVisible(false);
 
@@ -86,7 +104,7 @@ public class ReferrerTest extends AbstractAccountTest {
         welcomeScreen.header().clickLoginBtn();
         loginToAccount();
 
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         welcomeScreen.clickPersonalInfoLink();
 
         testReferrer(personalInfoPage.header(), true);
@@ -94,7 +112,7 @@ public class ReferrerTest extends AbstractAccountTest {
 
     @Test
     public void loggedOutPageTest() {
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         welcomeScreen.clickPersonalInfoLink();
         loginToAccount();
 
@@ -103,10 +121,10 @@ public class ReferrerTest extends AbstractAccountTest {
 
     @Test
     public void badClientNameTest() {
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID + "-bad", getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID + "-bad", getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         testReferrer(welcomeScreen.header(), false);
 
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID + "-bad", getFakeClientUrl());
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID + "-bad", getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         welcomeScreen.clickPersonalInfoLink();
         loginToAccount();
         testReferrer(personalInfoPage.header(), false);
@@ -114,57 +132,37 @@ public class ReferrerTest extends AbstractAccountTest {
 
     @Test
     public void badClientUriTest() {
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl() + "-bad");
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrlWithBadContext());
         testReferrer(welcomeScreen.header(), false);
 
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl() + "-bad");
+        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrlWithBadContext());
         welcomeScreen.clickPersonalInfoLink();
         loginToAccount();
         testReferrer(personalInfoPage.header(), false);
-    }
-
-    /**
-     * Test that i18n and referrer work well together
-     */
-    @Test
-    @Ignore // TODO remove this once KEYCLOAK-12936 is resolved
-    public void i18nTest() {
-        RealmRepresentation realm = testRealmResource().toRepresentation();
-        configureInternationalizationForRealm(realm);
-        testRealmResource().update(realm);
-        testContext.setTestRealmReps(Collections.emptyList()); // a small hack; we want realm re-import after this test
-
-        welcomeScreen.navigateTo(FAKE_CLIENT_ID, getFakeClientUrl());
-        welcomeScreen.header().assertReferrerLinkVisible(true);
-        welcomeScreen.header().selectLocale(CUSTOM_LOCALE);
-        welcomeScreen.header().assertReferrerLinkVisible(true);
-
-        welcomeScreen.clickPersonalInfoLink();
-        assertEquals(CUSTOM_LOCALE_NAME, loginPage.localeDropdown().getSelected());
-        loginToAccount();
-        personalInfoPage.header().assertReferrerLinkVisible(true);
-        personalInfoPage.header().selectLocale(DEFAULT_LOCALE);
-        assertEquals(DEFAULT_LOCALE_NAME, personalInfoPage.header().getCurrentLocaleName());
-        testReferrer(personalInfoPage.header(), true);
     }
 
     private void testReferrer(AbstractHeader header, boolean expectReferrerVisible) {
         if (expectReferrerVisible) {
             assertEquals(REFERRER_LINK_TEXT, header.getReferrerLinkText());
             header.clickReferrerLink();
-            assertCurrentUrlEquals(getFakeClientUrl());
+            assertCurrentUrlEquals(getFakeClientUrl(FAKE_CLIENT_URL_FRAGMENT));
         }
         else {
             header.assertReferrerLinkVisible(false);
         }
     }
 
-    private String getFakeClientUrl() {
+    private String getFakeClientUrl(String suffix) {
         // we need to use some page which host exists – Firefox is throwing exceptions like crazy if we try to load
         // a page on a non-existing host, like e.g. http://non-existing-server/
         // also we need to do this here as getAuthServerRoot is not ready when firing this class' constructor
-        return getAuthServerRoot() + "auth/non-existing-page/?foo=bar";
-        // TODO replace ^^ with the following once KEYCLOAK-12173 and KEYCLOAK-12189 are resolved
-        // return getAuthServerRoot() + "auth/non-existing-page/?foo=bar&bar=foo#anchor";
+         return getAuthServerRoot() + FAKE_CLIENT_URL_CONTEXT + suffix;
+    }
+
+    private String getFakeClientUrlWithBadContext() {
+        // we need to use some page which host exists – Firefox is throwing exceptions like crazy if we try to load
+        // a page on a non-existing host, like e.g. http://non-existing-server/
+        // also we need to do this here as getAuthServerRoot is not ready when firing this class' constructor
+         return getAuthServerRoot() + "bad/" + FAKE_CLIENT_URL_CONTEXT;
     }
 }

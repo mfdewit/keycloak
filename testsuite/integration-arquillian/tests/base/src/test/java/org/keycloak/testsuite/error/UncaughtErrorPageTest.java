@@ -1,9 +1,7 @@
 package org.keycloak.testsuite.error;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
@@ -13,13 +11,14 @@ import org.junit.Test;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.broker.provider.util.SimpleHttp;
 import org.keycloak.common.util.StreamUtil;
-import org.keycloak.representations.idm.ErrorRepresentation;
+import org.keycloak.models.BrowserSecurityHeaders;
 import org.keycloak.representations.idm.OAuth2ErrorRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.arquillian.annotation.UncaughtServerErrorExpected;
 import org.keycloak.testsuite.pages.ErrorPage;
 import org.keycloak.util.JsonSerialization;
+import org.keycloak.utils.MediaType;
 
 import javax.ws.rs.core.Response;
 import java.io.IOException;
@@ -113,6 +112,26 @@ public class UncaughtErrorPageTest extends AbstractKeycloakTest {
 
         assertTrue(errorPage.isCurrent());
         assertEquals("An internal server error has occurred", errorPage.getError());
+    }
+
+    @Test
+    @UncaughtServerErrorExpected
+    public void uncaughtErrorHeaders() throws IOException {
+        URI uri = suiteContext.getAuthServerInfo().getUriBuilder().path("/auth/realms/master/testing/uncaught-error").build();
+
+        try (CloseableHttpClient client = HttpClientBuilder.create().build()) {
+            SimpleHttp.Response response = SimpleHttp.doGet(uri.toString(), client).header("Accept", MediaType.TEXT_HTML_UTF_8).asResponse();
+
+            for (BrowserSecurityHeaders header : BrowserSecurityHeaders.values()) {
+                String expectedValue = header.getDefaultValue();
+
+                if (expectedValue == null || expectedValue.isEmpty()) {
+                    assertNull(response.getFirstHeader(header.getHeaderName()));
+                } else {
+                    assertEquals(expectedValue, response.getFirstHeader(header.getHeaderName()));
+                }
+            }
+        }
     }
 
     @Test

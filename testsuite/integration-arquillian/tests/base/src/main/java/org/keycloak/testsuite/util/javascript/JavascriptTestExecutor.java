@@ -6,10 +6,13 @@ import org.keycloak.testsuite.util.WaitUtils;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.Assert.fail;
+import static org.keycloak.testsuite.util.WaitUtils.pause;
 import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
 
 
@@ -39,13 +42,49 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor login() {
-        return login(null, null);
+        return login((String)null, null);
     }
     
     public JavascriptTestExecutor login(JavascriptStateValidator validator) {
-        return login(null, validator);
+        return login((String)null, validator);
+    }
+
+    /**
+     * Attaches a MutationObserver that sends a message from iframe to main window with incorrect data when the iframe is loaded
+     */
+    public JavascriptTestExecutor attachCheck3pCookiesIframeMutationObserver() {
+        jsExecutor.executeScript("// Select the node that will be observed for mutations\n" +
+                "    const targetNode = document.body;" +
+                "" +
+                "    // Options for the observer (which mutations to observe)\n" +
+                "    const config = {attributes: true, childList: true, subtree: true};" +
+                "" +
+                "    // Callback function to execute when mutations are observed\n" +
+                "    const callback = function (mutationsList, observer) {" +
+                "        console.log(\"Mutation found\");" +
+                "        var iframeNode = mutationsList[0].addedNodes[0];" +
+        "                if (iframeNode && iframeNode.localName === 'iframe') {" +
+        "                    var s = document.createElement('script');" +
+        "                    s.type = 'text/javascript';" +
+        "                    var code = \"window.parent.postMessage('Evil Message', '*');\";" +
+        "                    s.appendChild(document.createTextNode(code));" +
+        "                    iframeNode.contentDocument.body.appendChild(s);" +
+        "                }" +
+                "    }\n" +
+                "" +
+                "    // Create an observer instance linked to the callback function\n" +
+                "    const observer = new MutationObserver(callback);" +
+                "" +
+                "    // Start observing the target node for configured mutations\n" +
+                "    observer.observe(targetNode, config);");
+        
+        return this;
     }
     
+    public JavascriptTestExecutor login(JSObjectBuilder optionsBuilder, JavascriptStateValidator validator) {
+        return login(optionsBuilder.build(), validator);
+    }
+
     public JavascriptTestExecutor login(String options, JavascriptStateValidator validator) {
         if (options == null)
             jsExecutor.executeScript("keycloak.login()");
@@ -101,6 +140,11 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor configure(JSObjectBuilder argumentsBuilder) {
+        // a nasty hack: redirect console.warn to events
+        // mainly for FF as it doesn't yet support reading console.warn directly through webdriver
+        // see https://github.com/mozilla/geckodriver/issues/284
+        jsExecutor.executeScript("console.warn = event;");
+
         if (argumentsBuilder == null) {
             jsExecutor.executeScript("window.keycloak = Keycloak();");
         } else {
@@ -114,6 +158,7 @@ public class JavascriptTestExecutor {
         jsExecutor.executeScript("window.keycloak.onAuthRefreshError = function () {event('Auth Refresh Error')}");
         jsExecutor.executeScript("window.keycloak.onAuthLogout = function () {event('Auth Logout')}");
         jsExecutor.executeScript("window.keycloak.onTokenExpired = function () {event('Access token expired.')}");
+        jsExecutor.executeScript("window.keycloak.onActionUpdate = function (status) {event('AIA status: ' + status)}");
 
         configured = true;
 
@@ -125,6 +170,10 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor init(JSObjectBuilder argumentsBuilder, JavascriptStateValidator validator) {
+        return init(argumentsBuilder, validator, false);
+    }
+
+    public JavascriptTestExecutor init(JSObjectBuilder argumentsBuilder, JavascriptStateValidator validator, boolean expectPromptNoneRedirect) {
         if(!configured) {
             configure();
         }
@@ -138,7 +187,23 @@ public class JavascriptTestExecutor {
                 "       callback(\"Init Error\");" +
                 "   });";
 
-        Object output = jsExecutor.executeAsyncScript(script);
+        Object output;
+
+        if (expectPromptNoneRedirect) {
+            try {
+                output = jsExecutor.executeAsyncScript(script);
+                fail("Redirect to Keycloak was expected");
+            }
+            catch (WebDriverException e) {
+                waitForPageToLoad();
+                configured = false;
+                // the redirect should use prompt=none, that means KC should immediately redirect back to the app (regardless login state)
+                return init(argumentsBuilder, validator, false);
+            }
+        }
+        else {
+            output = jsExecutor.executeAsyncScript(script);
+        }
 
         if (validator != null) {
             validator.validate(jsDriver, output, events);
@@ -284,4 +349,18 @@ public class JavascriptTestExecutor {
         return this;
     }
 
+    public JavascriptTestExecutor wait(long millis, JavascriptStateValidator validator) {
+        pause(millis);
+
+        if (validator != null) {
+            validator.validate(jsDriver, null, events);
+        }
+
+        return this;
+    }
+
+    public JavascriptTestExecutor validateOutputField(JavascriptStateValidator validator) {
+        validator.validate(jsDriver, output, events);
+        return this;
+    }
 }

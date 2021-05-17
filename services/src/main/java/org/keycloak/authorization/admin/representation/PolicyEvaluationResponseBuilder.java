@@ -27,6 +27,7 @@ import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.policy.evaluation.Result;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.authorization.DecisionEffect;
@@ -40,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -188,19 +190,27 @@ public class PolicyEvaluationResponseBuilder {
         representation.setDescription(policy.getDescription());
 
         if ("uma".equals(representation.getType())) {
-            Map<String, String> filters = new HashMap<>();
+            Map<PermissionTicket.FilterOption, String> filters = new EnumMap<>(PermissionTicket.FilterOption.class);
 
-            filters.put(PermissionTicket.POLICY, policy.getId());
+            filters.put(PermissionTicket.FilterOption.POLICY_ID, policy.getId());
 
             List<PermissionTicket> tickets = authorization.getStoreFactory().getPermissionTicketStore().find(filters, policy.getResourceServer().getId(), -1, 1);
 
             if (!tickets.isEmpty()) {
                 KeycloakSession keycloakSession = authorization.getKeycloakSession();
+                RealmModel realm = authorization.getRealm();
                 PermissionTicket ticket = tickets.get(0);
-                UserModel owner = keycloakSession.users().getUserById(ticket.getOwner(), authorization.getRealm());
-                UserModel requester = keycloakSession.users().getUserById(ticket.getRequester(), authorization.getRealm());
+                UserModel userOwner = keycloakSession.users().getUserById(realm, ticket.getOwner());
+                UserModel requester = keycloakSession.users().getUserById(realm, ticket.getRequester());
+                String resourceOwner;
+                if (userOwner != null) {
+                    resourceOwner = getUserEmailOrUserName(userOwner);
+                } else {
+                    ClientModel clientOwner = realm.getClientById(ticket.getOwner());
+                    resourceOwner = clientOwner.getClientId();
+                }
 
-                representation.setDescription("Resource owner (" + getUserEmailOrUserName(owner) + ") grants access to " + getUserEmailOrUserName(requester));
+                representation.setDescription("Resource owner (" + resourceOwner + ") grants access to " + getUserEmailOrUserName(requester));
             } else {
                 String description = representation.getDescription();
 

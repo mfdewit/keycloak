@@ -27,11 +27,13 @@ import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.runner.RunWith;
+import org.junit.runners.model.TestTimedOutException;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.AuthenticationManagementResource;
 import org.keycloak.admin.client.resource.RealmsResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
+import org.keycloak.common.Profile;
 import org.keycloak.common.util.KeycloakUriBuilder;
 import org.keycloak.common.util.Time;
 import org.keycloak.representations.idm.ClientRepresentation;
@@ -44,6 +46,7 @@ import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
 import org.keycloak.testsuite.arquillian.KcArquillian;
 import org.keycloak.testsuite.arquillian.SuiteContext;
 import org.keycloak.testsuite.arquillian.TestContext;
+import org.keycloak.testsuite.arquillian.annotation.DisableFeature;
 import org.keycloak.testsuite.auth.page.AuthRealm;
 import org.keycloak.testsuite.auth.page.AuthServer;
 import org.keycloak.testsuite.auth.page.AuthServerContextRoot;
@@ -76,18 +79,20 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.concurrent.*;
+import java.util.function.Consumer;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertThat;
 import static org.keycloak.testsuite.admin.Users.setPasswordFor;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_HOST;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_PORT;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_SCHEME;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_SSL_REQUIRED;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_HOST;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_PORT;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SCHEME;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SSL_REQUIRED;
 import static org.keycloak.testsuite.auth.page.AuthRealm.MASTER;
 import static org.keycloak.testsuite.util.URLUtils.navigateToUri;
-import static org.keycloak.testsuite.util.URLUtils.removeDefaultPorts;
+import static org.keycloak.testsuite.util.ServerURLs.removeDefaultPorts;
 
 /**
  *
@@ -186,13 +191,13 @@ public abstract class AbstractKeycloakTest {
 
     protected void beforeAbstractKeycloakTestRealmImport() throws Exception {
     }
-    protected void postAfterAbstractKeycloak() {
+    protected void postAfterAbstractKeycloak() throws Exception {
     }
 
     protected void afterAbstractKeycloakTestRealmImport() {}
 
     @After
-    public void afterAbstractKeycloakTest() {
+    public void afterAbstractKeycloakTest() throws Exception {
         if (resetTimeOffset) {
             resetTimeOffset();
         }
@@ -251,19 +256,13 @@ public abstract class AbstractKeycloakTest {
     }
 
     public void deleteAllCookiesForMasterRealm() {
-        deleteAllCookiesForRealm(accountPage);
-    }
-
-    protected void deleteAllCookiesForRealm(Account realmAccountPage) {
-        // masterRealmPage.navigateTo();
-        realmAccountPage.navigateTo(); // Because IE webdriver freezes when loading a JSON page (realm page), we need to use this alternative
-        log.info("deleting cookies in '" + realmAccountPage.getAuthRealm() + "' realm");
-        driver.manage().deleteAllCookies();
+        deleteAllCookiesForRealm(MASTER);
     }
 
     protected void deleteAllCookiesForRealm(String realmName) {
-        // masterRealmPage.navigateTo();
-        navigateToUri(accountPage.getAuthRoot() + "/realms/" + realmName + "/account"); // Because IE webdriver freezes when loading a JSON page (realm page), we need to use this alternative
+        // we can't use /auth/realms/{realmName} because some browsers (e.g. Chrome) apparently don't send cookies
+        // to JSON pages and therefore can't delete realms cookies there; a non existing page will do just fine
+        navigateToUri(accountPage.getAuthRoot() + "/realms/" + realmName + "/super-random-page");
         log.info("deleting cookies in '" + realmName + "' realm");
         driver.manage().deleteAllCookies();
     }
@@ -370,7 +369,7 @@ public abstract class AbstractKeycloakTest {
 
     private void modifySamlAttributes(ClientRepresentation cr) {
         if (cr.getProtocol() != null && cr.getProtocol().equals("saml")) {
-            log.info("Modifying attributes of SAML client: " + cr.getClientId());
+            log.debug("Modifying attributes of SAML client: " + cr.getClientId());
             for (Map.Entry<String, String> entry : cr.getAttributes().entrySet()) {
                 cr.getAttributes().put(entry.getKey(), replaceHttpValuesWithHttps(entry.getValue()));
             }
@@ -404,6 +403,34 @@ public abstract class AbstractKeycloakTest {
               .replace("http", "https")
               .replace("8080", "8543")
               .replace("8180", "8543");
+    }
+
+    protected interface ExecutableTestMethod {
+        void execute() throws Exception;
+    }
+
+    protected void runTestWithTimeout(long timeout, ExecutableTestMethod executableTestMethod) throws Exception {
+        ExecutorService service = Executors.newSingleThreadExecutor();
+        Callable<Object> callable = new Callable<Object>() {
+            public Object call() throws Exception {
+                executableTestMethod.execute();
+                return null;
+            }
+        };
+        Future<Object> result = service.submit(callable);
+        service.shutdown();
+        try {
+            boolean terminated = service.awaitTermination(timeout,
+                    TimeUnit.MILLISECONDS);
+            if (!terminated) {
+                service.shutdownNow();
+            }
+            result.get(0, TimeUnit.MILLISECONDS); // throws the exception if one occurred during the invocation
+        } catch (TimeoutException e) {
+            throw new TestTimedOutException(timeout, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            throw new Exception(e);
+        }
     }
 
     /**
@@ -492,19 +519,30 @@ public abstract class AbstractKeycloakTest {
         return ApiUtil.createUserWithAdminClient(adminClient.realm(realm), homer);
     }
 
+    public String createUser(String realm, String username, String password, String firstName, String lastName, String email, Consumer<UserRepresentation> customizer) {
+        UserRepresentation user = createUserRepresentation(username, email, firstName, lastName, true, password);
+        customizer.accept(user);
+        return ApiUtil.createUserWithAdminClient(adminClient.realm(realm), user);
+    }
+
     public String createUser(String realm, String username, String password, String firstName, String lastName, String email) {
         UserRepresentation homer = createUserRepresentation(username, email, firstName, lastName, true, password);
         return ApiUtil.createUserWithAdminClient(adminClient.realm(realm), homer);
     }
 
-    public static UserRepresentation createUserRepresentation(String username, String email, String firstName, String lastName, boolean enabled) {
+    public static UserRepresentation createUserRepresentation(String username, String email, String firstName, String lastName, List<String> groups, boolean enabled) {
         UserRepresentation user = new UserRepresentation();
         user.setUsername(username);
         user.setEmail(email);
         user.setFirstName(firstName);
         user.setLastName(lastName);
+        user.setGroups(groups);
         user.setEnabled(enabled);
         return user;
+    }
+
+    public static UserRepresentation createUserRepresentation(String username, String email, String firstName, String lastName, boolean enabled) {
+        return createUserRepresentation(username, email, firstName, lastName, null, enabled);
     }
 
     public static UserRepresentation createUserRepresentation(String username, String email, String firstName, String lastName, boolean enabled, String password) {

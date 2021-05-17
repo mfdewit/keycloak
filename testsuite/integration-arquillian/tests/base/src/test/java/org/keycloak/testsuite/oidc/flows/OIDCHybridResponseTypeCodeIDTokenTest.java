@@ -60,11 +60,11 @@ public class OIDCHybridResponseTypeCodeIDTokenTest extends AbstractOIDCResponseT
         String idTokenStr = authzResponse.getIdToken();
         IDToken idToken = oauth.verifyIDToken(idTokenStr);
 
-        // Validate "c_hash"
+        // Validate "at_hash"
         Assert.assertNull(idToken.getAccessTokenHash());
-        Assert.assertNotNull(idToken.getCodeHash());
 
-        Assert.assertEquals(idToken.getCodeHash(), HashUtils.oidcHash(getIdTokenSignatureAlgorithm(), authzResponse.getCode()));
+        // Validate "c_hash"
+        assertValidCodeHash(idToken.getCodeHash(), authzResponse.getCode());
 
         // Financial API - Part 2: Read and Write API Security Profile
         // http://openid.net/specs/openid-financial-api-part-2.html#authorization-server
@@ -72,6 +72,12 @@ public class OIDCHybridResponseTypeCodeIDTokenTest extends AbstractOIDCResponseT
         Assert.assertNotNull(idToken.getStateHash());
 
         Assert.assertEquals(idToken.getStateHash(), HashUtils.oidcHash(getIdTokenSignatureAlgorithm(), authzResponse.getState()));
+
+        // Validate if token_type is null
+        Assert.assertNull(authzResponse.getTokenType());
+
+        // Validate if expires_in is null
+        Assert.assertNull(authzResponse.getExpiresIn());
 
         // IDToken exchanged for the code
         IDToken idToken2 = sendTokenRequestAndGetIDToken(loginEvent);

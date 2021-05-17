@@ -1772,7 +1772,7 @@ module.controller('ResourceServerPolicyRoleDetailCtrl', function($scope, $route,
     }
 });
 
-module.controller('ResourceServerPolicyGroupDetailCtrl', function($scope, $route, realm, client, Client, Groups, Group, PolicyController, Notifications) {
+module.controller('ResourceServerPolicyGroupDetailCtrl', function($scope, $route, realm, client, Client, Groups, Group, PolicyController, Notifications, $translate) {
     PolicyController.onInit({
         getPolicyType : function() {
             return "group";
@@ -1784,7 +1784,7 @@ module.controller('ResourceServerPolicyGroupDetailCtrl', function($scope, $route
             Groups.query({realm: $route.current.params.realm}, function(groups) {
                 $scope.groups = groups;
                 $scope.groupList = [
-                    {"id" : "realm", "name": "Groups",
+                    {"id" : "realm", "name": $translate.instant('groups'),
                                 "subGroups" : groups}
                 ];
             });
@@ -2088,6 +2088,105 @@ module.controller('ResourceServerPolicyAggregateDetailCtrl', function($scope, $r
             }
 
             $scope.policy.policies = policies;
+            delete $scope.policy.config;
+        }
+    }, realm, client, $scope);
+});
+
+module.controller('ResourceServerPolicyClientScopeDetailCtrl', function($scope, $route, realm, client, ClientScope, PolicyController) {
+    PolicyController.onInit({
+        getPolicyType : function() {
+            return "client-scope";
+        },
+
+        onInit : function() {
+            ClientScope.query({realm: $route.current.params.realm}, function(data) {
+                $scope.clientScopes = data;
+            });
+
+            $scope.selectedClientScopes = [];
+
+            $scope.selectClientScope = function(clientScope) {
+                if (!clientScope || !clientScope.id) {
+                    return;
+                }
+
+                $scope.selectedClientScope = null;
+
+                for (i = 0; i < $scope.selectedClientScopes.length; i++) {
+                    if ($scope.selectedClientScopes[i].id == clientScope.id) {
+                        return;
+                    }
+                }
+
+                $scope.selectedClientScopes.push(clientScope);
+            }
+
+            $scope.removeFromList = function(clientScope) {
+                var index = $scope.selectedClientScopes.indexOf(clientScope);
+                if (index != -1) {
+                    $scope.selectedClientScopes.splice(index, 1);
+                }
+            }
+        },
+
+        onInitUpdate : function(policy) {
+            var selectedClientScopes = [];
+
+            if (policy.clientScopes) {
+                var clientScopes = policy.clientScopes;
+
+                for (i = 0; i < clientScopes.length; i++) {
+                    ClientScope.get({realm: $route.current.params.realm, clientScope: clientScopes[i].id}, function(data) {
+                        for (i = 0; i < clientScopes.length; i++) {
+                            if (clientScopes[i].id == data.id) {
+                                data.required = clientScopes[i].required ? true : false;
+                            }
+                        }
+                        selectedClientScopes.push(data);
+                        $scope.selectedClientScopes = angular.copy(selectedClientScopes);
+                    });
+                }
+            }
+
+            $scope.$watch('selectedClientScopes', function() {
+                if (!angular.equals($scope.selectedClientScopes, selectedClientScopes)) {
+                    $scope.changed = true;
+                } else {
+                    $scope.changed = false;
+                }
+            }, true);
+        },
+
+        onUpdate : function() {
+            var clientScopes = [];
+
+            for (i = 0; i < $scope.selectedClientScopes.length; i++) {
+                var clientScope = {};
+                clientScope.id = $scope.selectedClientScopes[i].id;
+                if ($scope.selectedClientScopes[i].required) {
+                    clientScope.required = $scope.selectedClientScopes[i].required;
+                }
+                clientScopes.push(clientScope);
+            }
+
+            $scope.policy.clientScopes = clientScopes;
+            delete $scope.policy.config;
+        },
+
+        onCreate : function() {
+            var clientScopes = [];
+
+            for (i = 0; i < $scope.selectedClientScopes.length; i++) {
+                var clientScope = {};
+                clientScope.id = $scope.selectedClientScopes[i].id;
+                if ($scope.selectedClientScopes[i].required) {
+                    clientScope.required = $scope.selectedClientScopes[i].required;
+                }
+                clientScopes.push(clientScope);
+            }
+
+            $scope.policy.clientScopes = clientScopes;
             delete $scope.policy.config;
         }
     }, realm, client, $scope);

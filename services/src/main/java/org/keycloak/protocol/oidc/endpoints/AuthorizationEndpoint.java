@@ -18,6 +18,7 @@
 package org.keycloak.protocol.oidc.endpoints;
 
 import org.jboss.logging.Logger;
+import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.authentication.AuthenticationProcessor;
@@ -34,8 +35,10 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.protocol.AuthorizationEndpointBase;
 import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
+import org.keycloak.protocol.oidc.TokenManager;
 import org.keycloak.protocol.oidc.endpoints.request.AuthorizationEndpointRequest;
 import org.keycloak.protocol.oidc.endpoints.request.AuthorizationEndpointRequestParserProcessor;
+import org.keycloak.protocol.oidc.grants.device.endpoints.DeviceEndpoint;
 import org.keycloak.protocol.oidc.utils.OIDCRedirectUriBuilder;
 import org.keycloak.protocol.oidc.utils.OIDCResponseMode;
 import org.keycloak.protocol.oidc.utils.OIDCResponseType;
@@ -43,6 +46,8 @@ import org.keycloak.protocol.oidc.utils.RedirectUtils;
 import org.keycloak.services.ErrorPageException;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.Urls;
+import org.keycloak.services.clientpolicy.ClientPolicyException;
+import org.keycloak.services.clientpolicy.context.AuthorizationRequestContext;
 import org.keycloak.services.messages.Messages;
 import org.keycloak.services.resources.LoginActionsService;
 import org.keycloak.services.util.CacheControlUtil;
@@ -52,6 +57,7 @@ import org.keycloak.util.TokenUtil;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
+import javax.ws.rs.Path;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
@@ -111,6 +117,16 @@ public class AuthorizationEndpoint extends AuthorizationEndpointBase {
         return process(session.getContext().getUri().getQueryParameters());
     }
 
+    /**
+     * OAuth 2.0 Device Authorization endpoint
+     */
+    @Path("device")
+    public Object authorizeDevice() {
+        DeviceEndpoint endpoint = new DeviceEndpoint(realm, event);
+        ResteasyProviderFactory.getInstance().injectProperties(endpoint);
+        return endpoint;
+    }
+
     private Response process(MultivaluedMap<String, String> params) {
         String clientId = AuthorizationEndpointRequestParserProcessor.getClientId(event, session, params);
 
@@ -135,6 +151,12 @@ public class AuthorizationEndpoint extends AuthorizationEndpointBase {
             ServicesLogger.LOGGER.oidcScopeMissing();
         }
 
+        if (!TokenManager.isValidScope(request.getScope(), client)) {
+            ServicesLogger.LOGGER.invalidParameter(OIDCLoginProtocol.SCOPE_PARAM);
+            event.error(Errors.INVALID_REQUEST);
+            return redirectErrorToClient(parsedResponseMode, OAuthErrorException.INVALID_SCOPE, "Invalid scopes: " + request.getScope());
+        }
+
         errorResponse = checkOIDCParams();
         if (errorResponse != null) {
             return errorResponse;
@@ -144,6 +166,12 @@ public class AuthorizationEndpoint extends AuthorizationEndpointBase {
         errorResponse = checkPKCEParams();
         if (errorResponse != null) {
             return errorResponse;
+        }
+
+        try {
+            session.clientPolicy().triggerOnEvent(new AuthorizationRequestContext(parsedResponseType, request, redirectUri, params));
+        } catch (ClientPolicyException cpe) {
+            return redirectErrorToClient(parsedResponseMode, cpe.getError(), cpe.getErrorDetail());
         }
 
         authenticationSession = createAuthenticationSession(client, request.getState());

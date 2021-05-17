@@ -25,6 +25,7 @@ import org.keycloak.ServerStartupError;
 import org.keycloak.common.util.StringPropertyReplacer;
 import org.keycloak.connections.jpa.updater.JpaUpdaterProvider;
 import org.keycloak.connections.jpa.util.JpaUtils;
+import org.keycloak.migration.MigrationModelManager;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.KeycloakSessionTask;
@@ -88,7 +89,7 @@ public class DefaultJpaConnectionProviderFactory implements JpaConnectionProvide
 
             em = emf.createEntityManager(SynchronizationType.SYNCHRONIZED);
         }
-        em = PersistenceExceptionConverter.create(em);
+        em = PersistenceExceptionConverter.create(session, em);
         if (!jtaEnabled) session.getTransactionManager().enlist(new JpaKeycloakTransaction(em));
         return new DefaultJpaConnectionProvider(em);
     }
@@ -213,6 +214,18 @@ public class DefaultJpaConnectionProviderFactory implements JpaConnectionProvide
                             if (globalStatsInterval != -1) {
                                 startGlobalStats(session, globalStatsInterval);
                             }
+
+                            /*
+                             * Migrate model is executed just in case following providers are "jpa".
+                             * In Map Storage, there is an assumption that migrateModel is not needed.
+                             */
+                            if ((Config.getProvider("realm") == null || "jpa".equals(Config.getProvider("realm"))) &&
+                                (Config.getProvider("client") == null || "jpa".equals(Config.getProvider("client"))) &&
+                                (Config.getProvider("clientScope") == null || "jpa".equals(Config.getProvider("clientScope")))) {
+
+                                logger.debug("Calling migrateModel");
+                                migrateModel(session);
+                            }
                         } finally {
                             // Close after creating EntityManagerFactory to prevent in-mem databases from closing
                             if (connection != null) {
@@ -243,7 +256,7 @@ public class DefaultJpaConnectionProviderFactory implements JpaConnectionProvide
             operationalInfo.put("databaseProduct", md.getDatabaseProductName() + " " + md.getDatabaseProductVersion());
             operationalInfo.put("databaseDriver", md.getDriverName() + " " + md.getDriverVersion());
 
-            logger.debugf("Database info: %s", operationalInfo.toString());
+            logger.infof("Database info: %s", operationalInfo.toString());
         } catch (SQLException e) {
             logger.warn("Unable to prepare operational info due database exception: " + e.getMessage());
         }
@@ -402,4 +415,7 @@ public class DefaultJpaConnectionProviderFactory implements JpaConnectionProvide
         }
     }
 
+    private void migrateModel(KeycloakSession session) {
+        KeycloakModelUtils.runJobInTransaction(session.getKeycloakSessionFactory(), MigrationModelManager::migrate);
+    }
 }

@@ -1,11 +1,12 @@
 package org.keycloak.testsuite.ssl;
 
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.AUTH_SERVER_SSL_REQUIRED;
+import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SSL_REQUIRED;
 
 import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.keycloak.common.enums.SslRequired;
+import org.keycloak.jose.jwk.JSONWebKeySet;
 import org.keycloak.protocol.oidc.representations.OIDCConfigurationRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
@@ -45,6 +46,33 @@ public class TLSTest extends AbstractTestRealmKeycloakTest {
 
         //then
         Assert.assertTrue(config.getAuthorizationEndpoint().startsWith(AUTH_SERVER_ROOT_WITHOUT_TLS));
+    }
+
+    @Test
+    public void testSSLAlwaysRequired() throws Exception {
+        // Switch realm SSLRequired to Always
+        RealmRepresentation realmRep = testRealm().toRepresentation();
+        String origSslRequired = realmRep.getSslRequired();
+        realmRep.setSslRequired(SslRequired.ALL.toString());
+        testRealm().update(realmRep);
+
+        // Try access "WellKnown" endpoint unsecured. It should fail
+        oauth.baseUrl(AUTH_SERVER_ROOT_WITHOUT_TLS);
+        OIDCConfigurationRepresentation config = oauth.doWellKnownRequest("test");
+        Assert.assertNull(config.getAuthorizationEndpoint());
+        Assert.assertEquals("HTTPS required", config.getOtherClaims().get("error_description"));
+
+        // Try access "JWKS URL" unsecured. It should fail
+        try {
+            JSONWebKeySet keySet = oauth.doCertsRequest("test");
+            Assert.fail("This should not be successful");
+        } catch (Exception e) {
+            // Expected
+        }
+
+        // Revert SSLRequired
+        realmRep.setSslRequired(origSslRequired);
+        testRealm().update(realmRep);
     }
 
 }

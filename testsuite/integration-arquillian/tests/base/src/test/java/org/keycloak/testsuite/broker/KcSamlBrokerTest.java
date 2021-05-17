@@ -1,5 +1,7 @@
 package org.keycloak.testsuite.broker;
 
+import org.keycloak.admin.client.resource.IdentityProviderResource;
+import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import com.google.common.collect.ImmutableMap;
 import org.keycloak.broker.saml.mappers.AttributeToRoleMapper;
@@ -10,6 +12,8 @@ import org.keycloak.dom.saml.v2.assertion.AttributeType;
 import org.keycloak.dom.saml.v2.assertion.StatementAbstractType;
 import org.keycloak.dom.saml.v2.protocol.AuthnRequestType;
 import org.keycloak.dom.saml.v2.protocol.ResponseType;
+import org.keycloak.models.IdentityProviderMapperModel;
+import org.keycloak.models.IdentityProviderMapperSyncMode;
 import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
@@ -37,14 +41,13 @@ import org.w3c.dom.Document;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertThat;
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.getAuthServerContextRoot;
-import static org.keycloak.testsuite.broker.AbstractBrokerTest.ROLE_MANAGER;
-import static org.keycloak.testsuite.broker.AbstractBrokerTest.ROLE_USER;
 import static org.keycloak.testsuite.saml.RoleMapperTest.ROLE_ATTRIBUTE_NAME;
 import static org.keycloak.testsuite.util.Matchers.isSamlResponse;
 import static org.keycloak.testsuite.util.SamlStreams.assertionsUnencrypted;
 import static org.keycloak.testsuite.util.SamlStreams.attributeStatements;
 import static org.keycloak.testsuite.util.SamlStreams.attributesUnecrypted;
+import static org.keycloak.testsuite.broker.BrokerTestTools.getConsumerRoot;
+import static org.keycloak.testsuite.broker.BrokerTestTools.getProviderRoot;
 
 /**
  * Final class as it's not intended to be overriden. Feel free to remove "final" if you really know what you are doing.
@@ -59,11 +62,12 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
     private static final String EMPTY_ATTRIBUTE_NAME = "empty.attribute.name";
 
     @Override
-    protected Iterable<IdentityProviderMapperRepresentation> createIdentityProviderMappers() {
+    protected Iterable<IdentityProviderMapperRepresentation> createIdentityProviderMappers(IdentityProviderMapperSyncMode syncMode) {
         IdentityProviderMapperRepresentation attrMapper1 = new IdentityProviderMapperRepresentation();
         attrMapper1.setName("manager-role-mapper");
         attrMapper1.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
         attrMapper1.setConfig(ImmutableMap.<String,String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
                 .put(UserAttributeMapper.ATTRIBUTE_NAME, "Role")
                 .put(ATTRIBUTE_VALUE, ROLE_MANAGER)
                 .put("role", ROLE_MANAGER)
@@ -73,6 +77,7 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         attrMapper2.setName("user-role-mapper");
         attrMapper2.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
         attrMapper2.setConfig(ImmutableMap.<String,String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
                 .put(UserAttributeMapper.ATTRIBUTE_NAME, "Role")
                 .put(ATTRIBUTE_VALUE, ROLE_USER)
                 .put("role", ROLE_USER)
@@ -82,7 +87,8 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         attrMapper3.setName("friendly-mapper");
         attrMapper3.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
         attrMapper3.setConfig(ImmutableMap.<String,String>builder()
-                .put(UserAttributeMapper.ATTRIBUTE_FRIENDLY_NAME, AbstractUserAttributeMapperTest.ATTRIBUTE_TO_MAP_FRIENDLY_NAME)
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
+                .put(UserAttributeMapper.ATTRIBUTE_FRIENDLY_NAME, KcSamlBrokerConfiguration.ATTRIBUTE_TO_MAP_FRIENDLY_NAME)
                 .put(ATTRIBUTE_VALUE, ROLE_FRIENDLY_MANAGER)
                 .put("role", ROLE_FRIENDLY_MANAGER)
                 .build());
@@ -91,6 +97,7 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         attrMapper4.setName("user-role-dot-guide-mapper");
         attrMapper4.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
         attrMapper4.setConfig(ImmutableMap.<String,String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
                 .put(UserAttributeMapper.ATTRIBUTE_NAME, "Role")
                 .put(ATTRIBUTE_VALUE, ROLE_USER_DOT_GUIDE)
                 .put("role", ROLE_USER_DOT_GUIDE)
@@ -100,22 +107,37 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         attrMapper5.setName("empty-attribute-to-role-mapper");
         attrMapper5.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
         attrMapper5.setConfig(ImmutableMap.<String,String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
                 .put(UserAttributeMapper.ATTRIBUTE_NAME, EMPTY_ATTRIBUTE_NAME)
                 .put(ATTRIBUTE_VALUE, "")
                 .put("role", EMPTY_ATTRIBUTE_ROLE)
                 .build());
 
-        return Arrays.asList(new IdentityProviderMapperRepresentation[] { attrMapper1, attrMapper2, attrMapper3, attrMapper4, attrMapper5 });
+        return Arrays.asList(attrMapper1, attrMapper2, attrMapper3, attrMapper4, attrMapper5 );
     }
 
-    // KEYCLOAK-3987
+    protected void createAdditionalMapperWithCustomSyncMode(IdentityProviderMapperSyncMode syncMode) {
+        IdentityProviderMapperRepresentation friendlyManagerMapper = new IdentityProviderMapperRepresentation();
+        friendlyManagerMapper.setName("friendly-manager-role-mapper");
+        friendlyManagerMapper.setIdentityProviderMapper(AttributeToRoleMapper.PROVIDER_ID);
+        friendlyManagerMapper.setConfig(ImmutableMap.<String,String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, syncMode.toString())
+                .put(UserAttributeMapper.ATTRIBUTE_NAME, "Role")
+                .put(ATTRIBUTE_VALUE, ROLE_FRIENDLY_MANAGER)
+                .put("role", ROLE_FRIENDLY_MANAGER)
+                .build());
+        friendlyManagerMapper.setIdentityProviderAlias(bc.getIDPAlias());
+        RealmResource realm = adminClient.realm(bc.consumerRealmName());
+        IdentityProviderResource idpResource = realm.identityProviders().get(bc.getIDPAlias());
+        idpResource.addMapper(friendlyManagerMapper).close();
+    }
+
     @Test
-    @Override
-    public void grantNewRoleFromToken() {
+    public void mapperUpdatesRolesOnEveryLogInForLegacyMode() {
         createRolesForRealm(bc.providerRealmName());
         createRolesForRealm(bc.consumerRealmName());
 
-        createRoleMappersForConsumerRealm();
+        createRoleMappersForConsumerRealm(IdentityProviderMapperSyncMode.FORCE);
 
         RoleRepresentation managerRole = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_MANAGER).toRepresentation();
         RoleRepresentation friendlyManagerRole = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_FRIENDLY_MANAGER).toRepresentation();
@@ -133,7 +155,7 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         assertThat(currentRoles, hasItems(ROLE_MANAGER));
         assertThat(currentRoles, not(hasItems(ROLE_USER, ROLE_FRIENDLY_MANAGER)));
 
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
 
         userResource.roles().realmLevel().add(Collections.singletonList(userRole));
@@ -146,7 +168,7 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
           .collect(Collectors.toSet());
         assertThat(currentRoles, hasItems(ROLE_MANAGER, ROLE_USER, ROLE_FRIENDLY_MANAGER));
 
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
 
         userResource.roles().realmLevel().remove(Collections.singletonList(friendlyManagerRole));
@@ -159,8 +181,8 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         assertThat(currentRoles, hasItems(ROLE_MANAGER, ROLE_USER));
         assertThat(currentRoles, not(hasItems(ROLE_FRIENDLY_MANAGER)));
 
-        logoutFromRealm(bc.providerRealmName());
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getProviderRoot(), bc.providerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
     }
 
     @Test
@@ -171,7 +193,6 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         createRoleMappersForConsumerRealm();
 
         RoleRepresentation managerRole = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_MANAGER).toRepresentation();
-        RoleRepresentation friendlyManagerRole = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_FRIENDLY_MANAGER).toRepresentation();
         RoleRepresentation userRole = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_USER).toRepresentation();
         RoleRepresentation userRoleDotGuide = adminClient.realm(bc.providerRealmName()).roles().get(ROLE_USER_DOT_GUIDE).toRepresentation();
 
@@ -190,12 +211,12 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         assertThat(currentRoles, hasItems(ROLE_MANAGER));
         assertThat(currentRoles, not(hasItems(ROLE_USER, ROLE_FRIENDLY_MANAGER, ROLE_USER_DOT_GUIDE)));
 
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
 
         UserRepresentation urp = userResourceProv.toRepresentation();
         urp.setAttributes(new HashMap<>());
-        urp.getAttributes().put(AbstractUserAttributeMapperTest.ATTRIBUTE_TO_MAP_FRIENDLY_NAME, Collections.singletonList(ROLE_FRIENDLY_MANAGER));
+        urp.getAttributes().put(KcSamlBrokerConfiguration.ATTRIBUTE_TO_MAP_FRIENDLY_NAME, Collections.singletonList(ROLE_FRIENDLY_MANAGER));
         userResourceProv.update(urp);
         userResourceProv.roles().realmLevel().add(Collections.singletonList(userRole));
         userResourceProv.roles().realmLevel().add(Collections.singletonList(userRoleDotGuide));
@@ -207,7 +228,7 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
           .collect(Collectors.toSet());
         assertThat(currentRoles, hasItems(ROLE_MANAGER, ROLE_USER, ROLE_USER_DOT_GUIDE, ROLE_FRIENDLY_MANAGER));
 
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
 
         urp = userResourceProv.toRepresentation();
@@ -222,19 +243,19 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         assertThat(currentRoles, hasItems(ROLE_MANAGER, ROLE_USER, ROLE_USER_DOT_GUIDE));
         assertThat(currentRoles, not(hasItems(ROLE_FRIENDLY_MANAGER)));
 
-        logoutFromRealm(bc.providerRealmName());
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getProviderRoot(), bc.providerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
     }
 
     // KEYCLOAK-6106
     @Test
     public void loginClientWithDotsInName() throws Exception {
-        AuthnRequestType loginRep = SamlClient.createLoginRequestDocument(AbstractSamlTest.SAML_CLIENT_ID_SALES_POST + ".dot/ted", getAuthServerContextRoot() + "/sales-post/saml", null);
+        AuthnRequestType loginRep = SamlClient.createLoginRequestDocument(AbstractSamlTest.SAML_CLIENT_ID_SALES_POST + ".dot/ted", getConsumerRoot() + "/sales-post/saml", null);
 
         Document doc = SAML2Request.convert(loginRep);
 
         SAMLDocumentHolder samlResponse = new SamlClientBuilder()
-          .authnRequest(getAuthServerSamlEndpoint(bc.consumerRealmName()), doc, Binding.POST).build()   // Request to consumer IdP
+          .authnRequest(getConsumerSamlEndpoint(bc.consumerRealmName()), doc, Binding.POST).build()   // Request to consumer IdP
           .login().idp(bc.getIDPAlias()).build()
 
           .processSamlResponse(Binding.POST)    // AuthnRequest to producer IdP
@@ -261,12 +282,12 @@ public final class KcSamlBrokerTest extends AbstractAdvancedBrokerTest {
         createRolesForRealm(bc.consumerRealmName());
         createRoleMappersForConsumerRealm();
 
-        AuthnRequestType loginRep = SamlClient.createLoginRequestDocument(AbstractSamlTest.SAML_CLIENT_ID_SALES_POST + ".dot/ted", getAuthServerContextRoot() + "/sales-post/saml", null);
+        AuthnRequestType loginRep = SamlClient.createLoginRequestDocument(AbstractSamlTest.SAML_CLIENT_ID_SALES_POST + ".dot/ted", getConsumerRoot() + "/sales-post/saml", null);
 
         Document doc = SAML2Request.convert(loginRep);
 
         SAMLDocumentHolder samlResponse = new SamlClientBuilder()
-                .authnRequest(getAuthServerSamlEndpoint(bc.consumerRealmName()), doc, Binding.POST).build()   // Request to consumer IdP
+                .authnRequest(getConsumerSamlEndpoint(bc.consumerRealmName()), doc, Binding.POST).build()   // Request to consumer IdP
                 .login().idp(bc.getIDPAlias()).build()
 
                 .processSamlResponse(Binding.POST)    // AuthnRequest to producer IdP
