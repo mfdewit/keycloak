@@ -51,8 +51,6 @@ import org.keycloak.authentication.authenticators.client.ClientIdAndSecretAuthen
 import org.keycloak.authentication.authenticators.client.JWTClientAuthenticator;
 import org.keycloak.authentication.authenticators.client.JWTClientSecretAuthenticator;
 import org.keycloak.authentication.authenticators.client.X509ClientAuthenticator;
-import org.keycloak.client.registration.Auth;
-import org.keycloak.client.registration.ClientRegistration;
 import org.keycloak.client.registration.ClientRegistrationException;
 import org.keycloak.common.Profile;
 import org.keycloak.events.Details;
@@ -68,8 +66,6 @@ import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.utils.OIDCResponseType;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.RefreshToken;
-import org.keycloak.representations.idm.ClientInitialAccessCreatePresentation;
-import org.keycloak.representations.idm.ClientInitialAccessPresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.EventRepresentation;
@@ -83,22 +79,21 @@ import org.keycloak.services.clientpolicy.condition.AnyClientConditionFactory;
 import org.keycloak.services.clientpolicy.condition.ClientAccessTypeConditionFactory;
 import org.keycloak.services.clientpolicy.condition.ClientRolesConditionFactory;
 import org.keycloak.services.clientpolicy.condition.ClientScopesConditionFactory;
-import org.keycloak.services.clientpolicy.condition.ClientUpdateContextConditionFactory;
-import org.keycloak.services.clientpolicy.condition.ClientUpdateSourceGroupsConditionFactory;
-import org.keycloak.services.clientpolicy.condition.ClientUpdateSourceHostsConditionFactory;
-import org.keycloak.services.clientpolicy.condition.ClientUpdateSourceRolesConditionFactory;
+import org.keycloak.services.clientpolicy.condition.ClientUpdaterContextConditionFactory;
+import org.keycloak.services.clientpolicy.condition.ClientUpdaterSourceGroupsConditionFactory;
+import org.keycloak.services.clientpolicy.condition.ClientUpdaterSourceHostsConditionFactory;
+import org.keycloak.services.clientpolicy.condition.ClientUpdaterSourceRolesConditionFactory;
 import org.keycloak.services.clientpolicy.executor.ConfidentialClientAcceptExecutorFactory;
 import org.keycloak.services.clientpolicy.executor.ConsentRequiredExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.HolderOfKeyEnforceExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.PKCEEnforceExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.SecureClientAuthEnforceExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.SecureClientRegisteringUriEnforceExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.HolderOfKeyEnforcerExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.PKCEEnforcerExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.SecureClientAuthenticatorExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.SecureClientUrisExecutorFactory;
 import org.keycloak.services.clientpolicy.executor.SecureRequestObjectExecutorFactory;
 import org.keycloak.services.clientpolicy.executor.SecureResponseTypeExecutorFactory;
 import org.keycloak.services.clientpolicy.executor.SecureSessionEnforceExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.SecureSigningAlgorithmEnforceExecutorFactory;
-import org.keycloak.services.clientpolicy.executor.SecureSigningAlgorithmForSignedJwtEnforceExecutor;
-import org.keycloak.services.clientpolicy.executor.SecureSigningAlgorithmForSignedJwtEnforceExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.SecureSigningAlgorithmExecutorFactory;
+import org.keycloak.services.clientpolicy.executor.SecureSigningAlgorithmForSignedJwtExecutorFactory;
 import org.keycloak.services.clientpolicy.executor.SecureRequestObjectExecutor;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
@@ -212,6 +207,31 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         assertEquals(JWTClientSecretAuthenticator.PROVIDER_ID, getClientByAdmin(cId).getClientAuthenticatorType());
     }
 
+    // KEYCLOAK-18108
+    @Test
+    public void testTwoProfilesWithDifferentConfigurationOfSameExecutorType() throws Exception {
+        setupPolicyClientIdAndSecretNotAcceptableAuthType(POLICY_NAME);
+
+        // register another profile with "SecureClientAuthEnforceExecutorFactory", but use different configuration of client authenticator.
+        // This profile won't allow JWTClientSecretAuthenticator.PROVIDER_ID
+        String profileName = "UnusedProfile";
+        String json = (new ClientProfilesBuilder(getProfilesWithoutGlobals())).addProfile(
+                (new ClientProfileBuilder()).createProfile(profileName, "Profile with SecureClientAuthEnforceExecutorFactory")
+                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
+                                createSecureClientAuthEnforceExecutorConfig(Boolean.FALSE,
+                                        Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
+                                        null))
+                        .toRepresentation()
+        ).toString();
+        updateProfiles(json);
+
+        // Make sure it is still possible to create client with JWTClientSecretAuthenticator. The "UnusedProfile" should not be used as it is not referenced from any client policy
+        String cId = createClientByAdmin(generateSuffixedName(CLIENT_NAME), (ClientRepresentation clientRep) -> {
+            clientRep.setClientAuthenticatorType(JWTClientSecretAuthenticator.PROVIDER_ID);
+        });
+        assertEquals(JWTClientSecretAuthenticator.PROVIDER_ID, getClientByAdmin(cId).getClientAuthenticatorType());
+    }
+
     @Test
     public void testAdminClientUpdateAcceptableAuthType() throws Exception {
         setupPolicyClientIdAndSecretNotAcceptableAuthType(POLICY_NAME);
@@ -250,7 +270,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Pershyy Profil")
-                       .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                            createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
                                Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                                X509ClientAuthenticator.PROVIDER_ID))
@@ -261,8 +281,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Persha Polityka", Boolean.TRUE)
-                       .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER)))
+                       .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER)))
                        .addProfile(PROFILE_NAME)
                        .toRepresentation()
                ).toString();
@@ -277,7 +297,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update profiles
         json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Pershyy Profil")
-                    .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                         createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                             JWTClientAuthenticator.PROVIDER_ID))
@@ -333,7 +353,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Eichte profil")
-                       .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                            createPKCEEnforceExecutorConfig(Boolean.TRUE))
                        .toRepresentation()
                 ).toString();
@@ -382,7 +402,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Purofairu Sono Ichi")
-                       .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                            createPKCEEnforceExecutorConfig(Boolean.FALSE))
                        .toRepresentation()
                 ).toString();
@@ -393,8 +413,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
                    (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Porishii Sono Ichi", Boolean.TRUE)
                        .addCondition(ClientRolesConditionFactory.PROVIDER_ID, 
                            createClientRolesConditionConfig(Arrays.asList(SAMPLE_CLIENT_ROLE)))
-                       .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                               createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER)))
+                       .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                               createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER)))
                        .toRepresentation()
                ).toString();
         updatePolicies(json);
@@ -412,8 +432,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         updatePolicy((new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Koushinsareta Porishii Sono Ichi", Boolean.TRUE)
                 .addCondition(ClientRolesConditionFactory.PROVIDER_ID, 
                     createClientRolesConditionConfig(Arrays.asList(SAMPLE_CLIENT_ROLE)))
-                .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                    createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER)))
+                .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                    createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER)))
                 .addProfile(PROFILE_NAME)
                 .toRepresentation());
 
@@ -422,7 +442,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update profiles
         updateProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Koushinsareta Purofairu Sono Ichi")
-                .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                     createPKCEEnforceExecutorConfig(Boolean.TRUE))
                 .toRepresentation());
 
@@ -474,11 +494,11 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String profileBetaName = "MyProfile-beta";
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileAlphaName, "Pierwszy Profil")
-                       .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                            createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, Arrays.asList(ClientIdAndSecretAuthenticator.PROVIDER_ID), ClientIdAndSecretAuthenticator.PROVIDER_ID))
                        .toRepresentation()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileBetaName, "Drugi Profil")
-                       .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                            createPKCEEnforceExecutorConfig(Boolean.TRUE))
                        .toRepresentation()
                 ).toString();
@@ -491,8 +511,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
                    (new ClientPolicyBuilder()).createPolicy(policyAlphaName, "Pierwsza Zasada", Boolean.TRUE)
                        .addCondition(ClientRolesConditionFactory.PROVIDER_ID, 
                            createClientRolesConditionConfig(Arrays.asList(roleAlphaName, roleZetaName)))
-                       .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER)))
+                       .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER)))
                        .addProfile(profileAlphaName)
                        .toRepresentation()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(policyBetaName, "Drugi Zasada", Boolean.TRUE)
@@ -591,7 +611,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Die Erste Politik")
-                    .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, null)
+                    .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID, null)
                     .toRepresentation()
                 ).toString();
         updateProfiles(json);
@@ -604,17 +624,17 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
                            .toRepresentation()
                    ).addPolicy(
                        (new ClientPolicyBuilder()).createPolicy("MyPolicy-ClientUpdateSourceGroupsCondition", "Die Zweite Politik", Boolean.TRUE)
-                           .addCondition(ClientUpdateSourceGroupsConditionFactory.PROVIDER_ID, null)
+                           .addCondition(ClientUpdaterSourceGroupsConditionFactory.PROVIDER_ID, null)
                            .addProfile(PROFILE_NAME)
                            .toRepresentation()
                    ).addPolicy(
                        (new ClientPolicyBuilder()).createPolicy("MyPolicy-ClientUpdateSourceRolesCondition", "Die Dritte Politik", Boolean.TRUE)
-                           .addCondition(ClientUpdateSourceRolesConditionFactory.PROVIDER_ID, null)
+                           .addCondition(ClientUpdaterSourceRolesConditionFactory.PROVIDER_ID, null)
                            .addProfile(PROFILE_NAME)
                            .toRepresentation()
                    ).addPolicy(
                        (new ClientPolicyBuilder()).createPolicy("MyPolicy-ClientUpdateContextCondition", "Die Vierte Politik", Boolean.TRUE)
-                           .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, null)
+                           .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID, null)
                            .addProfile(PROFILE_NAME)
                            .toRepresentation()
                    ).toString();
@@ -638,7 +658,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Prvni Profil")
-                    .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                         createSecureClientAuthEnforceExecutorConfig(
                             Boolean.FALSE, 
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
@@ -651,7 +671,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Prvni Politika", Boolean.TRUE)
-                       .addCondition(ClientUpdateSourceHostsConditionFactory.PROVIDER_ID,
+                       .addCondition(ClientUpdaterSourceHostsConditionFactory.PROVIDER_ID,
                             createClientUpdateSourceHostsConditionConfig(Arrays.asList("localhost", "127.0.0.1")))
                        .addProfile(PROFILE_NAME)
                        .toRepresentation()
@@ -672,7 +692,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Aktualizovana Prvni Politika", Boolean.TRUE)
-                       .addCondition(ClientUpdateSourceHostsConditionFactory.PROVIDER_ID,
+                       .addCondition(ClientUpdaterSourceHostsConditionFactory.PROVIDER_ID,
                            createClientUpdateSourceHostsConditionConfig(Arrays.asList("example.com")))
                        .addProfile(PROFILE_NAME)
                        .toRepresentation()
@@ -693,7 +713,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forste Profil")
-                    .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                         createSecureClientAuthEnforceExecutorConfig(
                             Boolean.FALSE, 
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID),
@@ -706,7 +726,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Den Forste Politik", Boolean.TRUE)
-                       .addCondition(ClientUpdateSourceGroupsConditionFactory.PROVIDER_ID, 
+                       .addCondition(ClientUpdaterSourceGroupsConditionFactory.PROVIDER_ID,
                             createClientUpdateSourceGroupsConditionConfig(Arrays.asList("topGroup")))
                        .addProfile(PROFILE_NAME)
                        .toRepresentation()
@@ -733,7 +753,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Il Primo Profilo")
-                    .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                         createSecureClientAuthEnforceExecutorConfig(
                             Boolean.FALSE, 
                             Arrays.asList(JWTClientSecretAuthenticator.PROVIDER_ID),
@@ -746,7 +766,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                 (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "La Prima Politica", Boolean.TRUE)
-                    .addCondition(ClientUpdateSourceRolesConditionFactory.PROVIDER_ID, 
+                    .addCondition(ClientUpdaterSourceRolesConditionFactory.PROVIDER_ID,
                         createClientUpdateSourceRolesConditionConfig(Arrays.asList(Constants.REALM_MANAGEMENT_CLIENT_ID + "." + AdminRoles.CREATE_CLIENT)))
                     .addProfile(PROFILE_NAME)
                     .toRepresentation()
@@ -773,7 +793,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Het Eerste Profiel")
-                    .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                         createPKCEEnforceExecutorConfig(Boolean.TRUE))
                     .toRepresentation()
                 ).toString();
@@ -1165,7 +1185,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forsta Profilen")
-                    .addExecutor(SecureSigningAlgorithmEnforceExecutorFactory.PROVIDER_ID, null)
+                    .addExecutor(SecureSigningAlgorithmExecutorFactory.PROVIDER_ID, null)
                     .toRepresentation()
                 ).toString();
         updateProfiles(json);
@@ -1173,11 +1193,11 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                 (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Den Forsta Policyn", Boolean.TRUE)
-                    .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
+                    .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
                         createClientUpdateContextConditionConfig(Arrays.asList(
-                                ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER,
-                                ClientUpdateContextConditionFactory.BY_INITIAL_ACCESS_TOKEN,
-                                ClientUpdateContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
+                                ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER,
+                                ClientUpdaterContextConditionFactory.BY_INITIAL_ACCESS_TOKEN,
+                                ClientUpdaterContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
                     .addProfile(PROFILE_NAME)
                     .toRepresentation()
                 ).toString();
@@ -1238,7 +1258,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update profiles, ES256 enforced
         json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forsta Profilen")
-                    .addExecutor(SecureSigningAlgorithmEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureSigningAlgorithmExecutorFactory.PROVIDER_ID,
                             createSecureSigningAlgorithmEnforceExecutorConfig(org.keycloak.crypto.Algorithm.ES256))
                     .toRepresentation()
                 ).toString();
@@ -1262,7 +1282,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update profiles, fall back to PS256
         json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forsta Profilen")
-                    .addExecutor(SecureSigningAlgorithmEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureSigningAlgorithmExecutorFactory.PROVIDER_ID,
                             createSecureSigningAlgorithmEnforceExecutorConfig(org.keycloak.crypto.Algorithm.RS512))
                     .toRepresentation()
                 ).toString();
@@ -1319,7 +1339,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update profiles, enforce ES256
         json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forsta Profilen")
-                    .addExecutor(SecureSigningAlgorithmEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(SecureSigningAlgorithmExecutorFactory.PROVIDER_ID,
                             createSecureSigningAlgorithmEnforceExecutorConfig(org.keycloak.crypto.Algorithm.ES256))
                     .toRepresentation()
                 ).toString();
@@ -1344,7 +1364,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Ensimmainen Profiili")
-                    .addExecutor(SecureClientRegisteringUriEnforceExecutorFactory.PROVIDER_ID, null)
+                    .addExecutor(SecureClientUrisExecutorFactory.PROVIDER_ID, null)
                     .toRepresentation()
                 ).toString();
         updateProfiles(json);
@@ -1352,11 +1372,11 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                 (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Ensimmainen Politiikka", Boolean.TRUE)
-                    .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
+                    .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
                         createClientUpdateContextConditionConfig(Arrays.asList(
-                                ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER,
-                                ClientUpdateContextConditionFactory.BY_INITIAL_ACCESS_TOKEN,
-                                ClientUpdateContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
+                                ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER,
+                                ClientUpdaterContextConditionFactory.BY_INITIAL_ACCESS_TOKEN,
+                                ClientUpdaterContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
                     .addProfile(PROFILE_NAME)
                     .toRepresentation()
                 ).toString();
@@ -1391,10 +1411,10 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // update policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                 (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Paivitetyn Ensimmaisen Politiikka", Boolean.TRUE)
-                    .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
+                    .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
                         createClientUpdateContextConditionConfig(Arrays.asList(
-                                ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER,
-                                ClientUpdateContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
+                                ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER,
+                                ClientUpdaterContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
                     .addProfile(PROFILE_NAME)
                     .toRepresentation()
                 ).toString();
@@ -1544,7 +1564,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Ensimmainen Profiili")
-                    .addExecutor(SecureSigningAlgorithmForSignedJwtEnforceExecutorFactory.PROVIDER_ID, createSecureSigningAlgorithmForSignedJwtEnforceExecutorConfig(Boolean.TRUE)
+                    .addExecutor(SecureSigningAlgorithmForSignedJwtExecutorFactory.PROVIDER_ID, createSecureSigningAlgorithmForSignedJwtEnforceExecutorConfig(Boolean.TRUE)
                     ).toRepresentation()
                 )
                 .toString();
@@ -1636,7 +1656,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Ensimmainen Profiili")
-                    .addExecutor(SecureSigningAlgorithmForSignedJwtEnforceExecutorFactory.PROVIDER_ID, createSecureSigningAlgorithmForSignedJwtEnforceExecutorConfig(Boolean.FALSE))
+                    .addExecutor(SecureSigningAlgorithmForSignedJwtExecutorFactory.PROVIDER_ID, createSecureSigningAlgorithmForSignedJwtEnforceExecutorConfig(Boolean.FALSE))
                     .toRepresentation()
                 ).toString();
         updateProfiles(json);
@@ -1697,9 +1717,9 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Az Elso Profil")
-                    .addExecutor(HolderOfKeyEnforceExecutorFactory.PROVIDER_ID, 
+                    .addExecutor(HolderOfKeyEnforcerExecutorFactory.PROVIDER_ID,
                         createHolderOfKeyEnforceExecutorConfig(Boolean.TRUE))
-                    .addExecutor(SecureSigningAlgorithmForSignedJwtEnforceExecutorFactory.PROVIDER_ID,
+                    .addExecutor(SecureSigningAlgorithmForSignedJwtExecutorFactory.PROVIDER_ID,
                         createSecureSigningAlgorithmForSignedJwtEnforceExecutorConfig(Boolean.FALSE))
                     .toRepresentation()
                 ).toString();
@@ -2056,12 +2076,12 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         }
     }
 
-    private void setupPolicyClientIdAndSecretNotAcceptableAuthType(String policyName) throws ClientPolicyException {
+    private void setupPolicyClientIdAndSecretNotAcceptableAuthType(String policyName) throws Exception {
         // register profiles
         String profileName = "MyProfile";
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileName, "Primum Profile")
-                       .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                            createSecureClientAuthEnforceExecutorConfig(Boolean.FALSE, 
                                Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                                null))
@@ -2072,24 +2092,24 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         // register policies
         json = (new ClientPoliciesBuilder()).addPolicy(
                    (new ClientPolicyBuilder()).createPolicy(policyName, "Primum Consilium", Boolean.TRUE)
-                       .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_AUTHENTICATED_USER)))
+                       .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER)))
                        .addProfile(profileName)
                        .toRepresentation()
                ).toString();
         updatePolicies(json);
     }
 
-    private void setupPolicyAuthzCodeFlowUnderMultiPhasePolicy(String policyName) throws ClientPolicyException {
+    private void setupPolicyAuthzCodeFlowUnderMultiPhasePolicy(String policyName) throws Exception {
         // register profiles
         String profileName = "MyProfile";
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileName, "Primul Profil")
-                       .addExecutor(SecureClientAuthEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
                            createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
                                Arrays.asList(ClientIdAndSecretAuthenticator.PROVIDER_ID, JWTClientAuthenticator.PROVIDER_ID),
                                ClientIdAndSecretAuthenticator.PROVIDER_ID))
-                       .addExecutor(PKCEEnforceExecutorFactory.PROVIDER_ID, 
+                       .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
                            createPKCEEnforceExecutorConfig(Boolean.TRUE))
                        .toRepresentation()
                 ).toString();
@@ -2100,8 +2120,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
                    (new ClientPolicyBuilder()).createPolicy(policyName, "Prima Politica", Boolean.TRUE)
                        .addCondition(ClientRolesConditionFactory.PROVIDER_ID, 
                            createClientRolesConditionConfig(Arrays.asList(SAMPLE_CLIENT_ROLE)))
-                       .addCondition(ClientUpdateContextConditionFactory.PROVIDER_ID, 
-                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdateContextConditionFactory.BY_INITIAL_ACCESS_TOKEN)))
+                       .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                           createClientUpdateContextConditionConfig(Arrays.asList(ClientUpdaterContextConditionFactory.BY_INITIAL_ACCESS_TOKEN)))
                        .addProfile(profileName)
                        .toRepresentation()
                ).toString();
