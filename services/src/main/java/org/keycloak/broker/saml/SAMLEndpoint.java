@@ -114,6 +114,7 @@ import org.w3c.dom.NodeList;
 import java.net.URI;
 import java.security.cert.CertificateException;
 
+import java.util.Collections;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.xml.crypto.dsig.XMLSignature;
 
@@ -325,7 +326,7 @@ public class SAMLEndpoint {
 
             }  else {
                 for (String sessionIndex : request.getSessionIndex()) {
-                    String brokerSessionId = brokerUserId + "." + sessionIndex;
+                    String brokerSessionId = config.getAlias()  + "." + sessionIndex;
                     UserSessionModel userSession = session.sessions().getUserSessionByBrokerSessionId(realm, brokerSessionId);
                     if (userSession != null) {
                         if (userSession.getState() == UserSessionModel.State.LOGGING_OUT || userSession.getState() == UserSessionModel.State.LOGGED_OUT) {
@@ -519,7 +520,7 @@ public class SAMLEndpoint {
                 identity.setIdpConfig(config);
                 identity.setIdp(provider);
                 if (authn != null && authn.getSessionIndex() != null) {
-                    identity.setBrokerSessionId(identity.getBrokerUserId() + "." + authn.getSessionIndex());
+                    identity.setBrokerSessionId(config.getAlias() + "." + authn.getSessionIndex());
                  }
 
 
@@ -544,9 +545,9 @@ public class SAMLEndpoint {
         private AuthenticationSessionModel samlIdpInitiatedSSO(final String clientUrlName) {
             event.event(EventType.LOGIN);
             CacheControlUtil.noBackButtonCacheControlHeader();
-            Optional<ClientModel> oClient = SAMLEndpoint.this.realm.getClientsStream()
-                    .filter(c -> Objects.equals(c.getAttribute(SamlProtocol.SAML_IDP_INITIATED_SSO_URL_NAME), clientUrlName))
-                    .findFirst();
+            Optional<ClientModel> oClient = SAMLEndpoint.this.session.clients()
+              .searchClientsByAttributes(realm, Collections.singletonMap(SamlProtocol.SAML_IDP_INITIATED_SSO_URL_NAME, clientUrlName), 0, 1)
+              .findFirst();
 
             if (! oClient.isPresent()) {
                 event.error(Errors.CLIENT_NOT_FOUND);

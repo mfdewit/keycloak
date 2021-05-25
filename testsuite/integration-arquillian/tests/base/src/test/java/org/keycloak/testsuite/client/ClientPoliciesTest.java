@@ -65,6 +65,7 @@ import org.keycloak.protocol.oidc.OIDCConfigAttributes;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.utils.OIDCResponseType;
 import org.keycloak.representations.AccessToken;
+import org.keycloak.representations.IDToken;
 import org.keycloak.representations.RefreshToken;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -218,7 +219,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder(getProfilesWithoutGlobals())).addProfile(
                 (new ClientProfileBuilder()).createProfile(profileName, "Profile with SecureClientAuthEnforceExecutorFactory")
                         .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                                createSecureClientAuthEnforceExecutorConfig(Boolean.FALSE,
+                                createSecureClientAuthenticatorExecutorConfig(
                                         Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                                         null))
                         .toRepresentation()
@@ -266,12 +267,12 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
     }
 
     @Test
-    public void testAdminClientAugmentedAuthType() throws Exception {
+    public void testAdminClientAutoConfiguredClientAuthType() throws Exception {
         // register profiles
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Pershyy Profil")
                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                           createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
+                           createSecureClientAuthenticatorExecutorConfig(
                                Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                                X509ClientAuthenticator.PROVIDER_ID))
                        .toRepresentation()
@@ -288,8 +289,18 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
                ).toString();
         updatePolicies(json);
 
+        // Attempt to create client with set authenticator to ClientIdAndSecretAuthenticator. Should fail
+        try {
+            createClientByAdmin(generateSuffixedName(CLIENT_NAME), (ClientRepresentation clientRep) -> {
+                clientRep.setClientAuthenticatorType(ClientIdAndSecretAuthenticator.PROVIDER_ID);
+            });
+            fail();
+        } catch (ClientPolicyException e) {
+            assertEquals(OAuthErrorException.INVALID_CLIENT_METADATA, e.getMessage());
+        }
+
+        // Attempt to create client without set authenticator. Default authenticator should be set
         String cId = createClientByAdmin(generateSuffixedName(CLIENT_NAME), (ClientRepresentation clientRep) -> {
-            clientRep.setClientAuthenticatorType(ClientIdAndSecretAuthenticator.PROVIDER_ID);
         });
 
         assertEquals(X509ClientAuthenticator.PROVIDER_ID, getClientByAdmin(cId).getClientAuthenticatorType());
@@ -298,17 +309,71 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Pershyy Profil")
                     .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                        createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
+                        createSecureClientAuthenticatorExecutorConfig(
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                             JWTClientAuthenticator.PROVIDER_ID))
                     .toRepresentation()
              ).toString();
          updateProfiles(json);
 
+         // It is allowed to update authenticator to one of allowed client authenticators. Default client authenticator is not explicitly set in this case
          updateClientByAdmin(cId, (ClientRepresentation clientRep) -> {
              clientRep.setClientAuthenticatorType(JWTClientSecretAuthenticator.PROVIDER_ID);
          });
-         assertEquals(JWTClientAuthenticator.PROVIDER_ID, getClientByAdmin(cId).getClientAuthenticatorType());
+         assertEquals(JWTClientSecretAuthenticator.PROVIDER_ID, getClientByAdmin(cId).getClientAuthenticatorType());
+    }
+
+    // Tests that secured client authenticator is enforced also during client authentication itself (during token request after successful login)
+    @Test
+    public void testSecureClientAuthenticatorDuringLogin() throws Exception {
+        // register profile to NOT allow authentication with ClientIdAndSecret
+        String profileName = "MyProfile";
+        String json = (new ClientProfilesBuilder()).addProfile(
+                (new ClientProfileBuilder()).createProfile(profileName, "Primum Profile")
+                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
+                                createSecureClientAuthenticatorExecutorConfig(
+                                        Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
+                                        null))
+                        .toRepresentation()
+        ).toString();
+        updateProfiles(json);
+
+        // register role policy
+        String roleAlphaName = "sample-client-role-alpha";
+        String roleZetaName = "sample-client-role-zeta";
+        json = (new ClientPoliciesBuilder()).addPolicy(
+                (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Den Forste Politikken", Boolean.TRUE)
+                        .addCondition(ClientRolesConditionFactory.PROVIDER_ID,
+                                createClientRolesConditionConfig(Arrays.asList(roleAlphaName, roleZetaName)))
+                        .addProfile(profileName)
+                        .toRepresentation()
+        ).toString();
+        updatePolicies(json);
+
+        // create a client without client role. It should be successful (policy not applied)
+        String clientId = generateSuffixedName(CLIENT_NAME);
+        String cId = createClientByAdmin(clientId, (ClientRepresentation clientRep) -> {
+            clientRep.setSecret("secret");
+        });
+
+        // Login with clientIdAndSecret. It should be successful (policy not applied)
+        successfulLoginAndLogout(clientId, "secret");
+
+        // Add role to the client
+        ClientResource clientResource = ApiUtil.findClientByClientId(adminClient.realm(REALM_NAME), clientId);
+        ClientRepresentation clientRep = clientResource.toRepresentation();
+        Assert.assertEquals(ClientIdAndSecretAuthenticator.PROVIDER_ID, clientRep.getClientAuthenticatorType());
+        clientResource.roles().create(RoleBuilder.create().name(roleAlphaName).build());
+
+        // Not allowed to client authentication with clientIdAndSecret anymore. Client matches policy now
+        oauth.clientId(clientId);
+        oauth.doLogin(TEST_USER_NAME, TEST_USER_PASSWORD);
+
+        String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+        OAuthClient.AccessTokenResponse res = oauth.doAccessTokenRequest(code, "secret");
+        assertEquals(400, res.getStatusCode());
+        assertEquals(OAuthErrorException.INVALID_GRANT, res.getError());
+        assertEquals("Configured client authentication method not allowed for client", res.getErrorDescription());
     }
 
     @Test
@@ -495,7 +560,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileAlphaName, "Pierwszy Profil")
                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                           createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, Arrays.asList(ClientIdAndSecretAuthenticator.PROVIDER_ID), ClientIdAndSecretAuthenticator.PROVIDER_ID))
+                           createSecureClientAuthenticatorExecutorConfig(Arrays.asList(ClientIdAndSecretAuthenticator.PROVIDER_ID), ClientIdAndSecretAuthenticator.PROVIDER_ID))
                        .toRepresentation()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileBetaName, "Drugi Profil")
                        .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,
@@ -525,9 +590,21 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
 
         String clientAlphaId = generateSuffixedName("Alpha-App");
         String clientAlphaSecret = "secretAlpha";
+
+        // Not allowed client authenticator should fail
+        try {
+            createClientByAdmin(generateSuffixedName(CLIENT_NAME), (ClientRepresentation clientRep) -> {
+                clientRep.setSecret(clientAlphaSecret);
+                clientRep.setClientAuthenticatorType(JWTClientSecretAuthenticator.PROVIDER_ID);
+            });
+            fail();
+        } catch (ClientPolicyException e) {
+            assertEquals(OAuthErrorException.INVALID_CLIENT_METADATA, e.getMessage());
+        }
+
         String cAlphaId = createClientByAdmin(clientAlphaId, (ClientRepresentation clientRep) -> {
             clientRep.setSecret(clientAlphaSecret);
-            clientRep.setClientAuthenticatorType(JWTClientSecretAuthenticator.PROVIDER_ID);
+            clientRep.setClientAuthenticatorType(ClientIdAndSecretAuthenticator.PROVIDER_ID);
         });
         RolesResource rolesResourceAlpha = adminClient.realm(REALM_NAME).clients().get(cAlphaId).roles();
         rolesResourceAlpha.create(RoleBuilder.create().name(roleAlphaName).build());
@@ -659,8 +736,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Prvni Profil")
                     .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                        createSecureClientAuthEnforceExecutorConfig(
-                            Boolean.FALSE, 
+                        createSecureClientAuthenticatorExecutorConfig(
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                             null)
                         )
@@ -714,8 +790,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Den Forste Profil")
                     .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                        createSecureClientAuthEnforceExecutorConfig(
-                            Boolean.FALSE, 
+                        createSecureClientAuthenticatorExecutorConfig(
                             Arrays.asList(JWTClientAuthenticator.PROVIDER_ID),
                             null)
                         )
@@ -754,8 +829,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                 (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "Il Primo Profilo")
                     .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                        createSecureClientAuthEnforceExecutorConfig(
-                            Boolean.FALSE, 
+                        createSecureClientAuthenticatorExecutorConfig(
                             Arrays.asList(JWTClientSecretAuthenticator.PROVIDER_ID),
                             null)
                         )
@@ -905,8 +979,8 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         assertEquals(OAuthErrorException.INVALID_REQUEST, oauth.getCurrentQuery().get(OAuth2Constants.ERROR));
         assertEquals("invalid response_type", oauth.getCurrentQuery().get(OAuth2Constants.ERROR_DESCRIPTION));
 
-        oauth.responseType(OIDCResponseType.CODE + " " + OIDCResponseType.ID_TOKEN + " "  + OIDCResponseType.TOKEN);
-        oauth.nonce("cie8cjcwiw");
+        oauth.responseType(OIDCResponseType.CODE + " " + OIDCResponseType.ID_TOKEN);
+        oauth.nonce("vbwe566fsfffds");
         oauth.doLogin(TEST_USER_NAME, TEST_USER_PASSWORD);
 
         EventRepresentation loginEvent = events.expectLogin().client(clientId).assertEvent();
@@ -920,8 +994,16 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         oauth.doLogout(res.getRefreshToken(), clientSecret);
         events.expectLogout(sessionId).client(clientId).clearDetails().assertEvent();
 
-        oauth.responseType(OIDCResponseType.CODE + " " + OIDCResponseType.ID_TOKEN);
-        oauth.nonce("vbwe566fsfffds");
+        // update profiles
+        json = (new ClientProfilesBuilder()).addProfile(
+                (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "O Primeiro Perfil")
+                    .addExecutor(SecureResponseTypeExecutorFactory.PROVIDER_ID, createSecureResponseTypeExecutor(Boolean.FALSE, Boolean.TRUE))
+                    .toRepresentation()
+                ).toString();
+        updateProfiles(json);
+
+        oauth.responseType(OIDCResponseType.CODE + " " + OIDCResponseType.ID_TOKEN + " "  + OIDCResponseType.TOKEN); // token response type allowed
+        oauth.nonce("cie8cjcwiw");
         oauth.doLogin(TEST_USER_NAME, TEST_USER_PASSWORD);
 
         loginEvent = events.expectLogin().client(clientId).assertEvent();
@@ -929,6 +1011,101 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         codeId = loginEvent.getDetails().get(Details.CODE_ID);
         code = new OAuthClient.AuthorizationEndpointResponse(oauth).getCode();
         res = oauth.doAccessTokenRequest(code, clientSecret);
+        assertEquals(200, res.getStatusCode());
+        events.expectCodeToToken(codeId, sessionId).client(clientId).assertEvent();
+
+        oauth.doLogout(res.getRefreshToken(), clientSecret);
+        events.expectLogout(sessionId).client(clientId).clearDetails().assertEvent();
+    }
+
+    @Test
+    public void testSecureResponseTypeExecutorAllowTokenResponseType() throws Exception {
+        // register profiles
+        String json = (new ClientProfilesBuilder()).addProfile(
+                (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "O Primeiro Perfil")
+                    .addExecutor(SecureResponseTypeExecutorFactory.PROVIDER_ID, createSecureResponseTypeExecutor(null, Boolean.TRUE))
+                    .toRepresentation()
+                ).toString();
+        updateProfiles(json);
+
+        // register policies
+        json = (new ClientPoliciesBuilder()).addPolicy(
+                (new ClientPolicyBuilder()).createPolicy(POLICY_NAME, "Den Forsta Policyn", Boolean.TRUE)
+                    .addCondition(ClientUpdaterContextConditionFactory.PROVIDER_ID,
+                        createClientUpdateContextConditionConfig(Arrays.asList(
+                                ClientUpdaterContextConditionFactory.BY_AUTHENTICATED_USER,
+                                ClientUpdaterContextConditionFactory.BY_INITIAL_ACCESS_TOKEN,
+                                ClientUpdaterContextConditionFactory.BY_REGISTRATION_ACCESS_TOKEN)))
+                    .addCondition(ClientRolesConditionFactory.PROVIDER_ID, 
+                            createClientRolesConditionConfig(Arrays.asList(SAMPLE_CLIENT_ROLE)))
+                    .addProfile(PROFILE_NAME)
+                    .toRepresentation()
+                ).toString();
+        updatePolicies(json);
+
+        // create by Admin REST API
+        try {
+            createClientByAdmin(generateSuffixedName("App-by-Admin"), (ClientRepresentation clientRep) -> {
+                    clientRep.setSecret("secret");
+            });
+            fail();
+        } catch (ClientPolicyException e) {
+            assertEquals(OAuthErrorException.INVALID_CLIENT_METADATA, e.getMessage());
+        }
+
+        // update profiles
+        json = (new ClientProfilesBuilder()).addProfile(
+                (new ClientProfileBuilder()).createProfile(PROFILE_NAME, "O Primeiro Perfil")
+                    .addExecutor(SecureResponseTypeExecutorFactory.PROVIDER_ID, createSecureResponseTypeExecutor(Boolean.TRUE, null))
+                    .toRepresentation()
+                ).toString();
+        updateProfiles(json);
+
+        String cId = null;
+        String clientId = generateSuffixedName(CLIENT_NAME);
+        String clientSecret = "secret";
+        try {
+            cId = createClientByAdmin(clientId, (ClientRepresentation clientRep) -> {
+                clientRep.setSecret(clientSecret);
+                clientRep.setStandardFlowEnabled(Boolean.TRUE);
+                clientRep.setImplicitFlowEnabled(Boolean.TRUE);
+                clientRep.setPublicClient(Boolean.FALSE);
+            });
+        } catch (ClientPolicyException e) {
+            fail();
+        }
+        ClientRepresentation cRep = getClientByAdmin(cId);
+        assertEquals(Boolean.TRUE.toString(), cRep.getAttributes().get(OIDCConfigAttributes.ID_TOKEN_AS_DETACHED_SIGNATURE));
+
+        adminClient.realm(REALM_NAME).clients().get(cId).roles().create(RoleBuilder.create().name(SAMPLE_CLIENT_ROLE).build());
+
+        oauth.clientId(clientId);
+        oauth.openLoginForm();
+        assertEquals(OAuthErrorException.INVALID_REQUEST, oauth.getCurrentQuery().get(OAuth2Constants.ERROR));
+        assertEquals("invalid response_type", oauth.getCurrentQuery().get(OAuth2Constants.ERROR_DESCRIPTION));
+
+        oauth.responseType(OIDCResponseType.CODE + " " + OIDCResponseType.ID_TOKEN);
+        oauth.nonce("LIVieviDie028f");
+        oauth.doLogin(TEST_USER_NAME, TEST_USER_PASSWORD);
+
+        EventRepresentation loginEvent = events.expectLogin().client(clientId).assertEvent();
+        String sessionId = loginEvent.getSessionId();
+        String codeId = loginEvent.getDetails().get(Details.CODE_ID);
+        String code = new OAuthClient.AuthorizationEndpointResponse(oauth).getCode();
+
+        IDToken idToken = oauth.verifyIDToken(new OAuthClient.AuthorizationEndpointResponse(oauth).getIdToken());
+        // confirm ID token as detached signature does not include authenticated user's claims
+        Assert.assertNull(idToken.getEmailVerified());
+        Assert.assertNull(idToken.getName());
+        Assert.assertNull(idToken.getPreferredUsername());
+        Assert.assertNull(idToken.getGivenName());
+        Assert.assertNull(idToken.getFamilyName());
+        Assert.assertNull(idToken.getEmail());
+        assertEquals("LIVieviDie028f", idToken.getNonce());
+        // confirm an access token not returned
+        Assert.assertNull(new OAuthClient.AuthorizationEndpointResponse(oauth).getAccessToken());
+
+        OAuthClient.AccessTokenResponse res = oauth.doAccessTokenRequest(code, clientSecret);
         assertEquals(200, res.getStatusCode());
         events.expectCodeToToken(codeId, sessionId).client(clientId).assertEvent();
 
@@ -2082,7 +2259,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileName, "Primum Profile")
                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                           createSecureClientAuthEnforceExecutorConfig(Boolean.FALSE, 
+                           createSecureClientAuthenticatorExecutorConfig(
                                Arrays.asList(JWTClientAuthenticator.PROVIDER_ID, JWTClientSecretAuthenticator.PROVIDER_ID, X509ClientAuthenticator.PROVIDER_ID),
                                null))
                        .toRepresentation()
@@ -2106,7 +2283,7 @@ public class ClientPoliciesTest extends AbstractClientPoliciesTest {
         String json = (new ClientProfilesBuilder()).addProfile(
                    (new ClientProfileBuilder()).createProfile(profileName, "Primul Profil")
                        .addExecutor(SecureClientAuthenticatorExecutorFactory.PROVIDER_ID,
-                           createSecureClientAuthEnforceExecutorConfig(Boolean.TRUE, 
+                           createSecureClientAuthenticatorExecutorConfig(
                                Arrays.asList(ClientIdAndSecretAuthenticator.PROVIDER_ID, JWTClientAuthenticator.PROVIDER_ID),
                                ClientIdAndSecretAuthenticator.PROVIDER_ID))
                        .addExecutor(PKCEEnforcerExecutorFactory.PROVIDER_ID,

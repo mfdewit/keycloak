@@ -2972,23 +2972,27 @@ module.controller('ClientPoliciesProfilesListCtrl', function($scope, realm, clie
     $scope.clientProfiles = clientProfiles;
 
     $scope.removeClientProfile = function(clientProfile) {
-        console.log("Deleting client profile from the JSON: " + clientProfile.name);
+        Dialog.confirmDelete(clientProfile.name, 'client profile', function() {
+            console.log("Deleting client profile from the JSON: " + clientProfile.name);
 
-        for (var i=0 ; i < $scope.clientProfiles.profiles.length ; i++) {
-            var currentProfile = $scope.clientProfiles.profiles[i];
-            if (currentProfile.name === clientProfile.name) {
-                $scope.clientProfiles.profiles.splice(i, 1);
-                break;
+            for (var i = 0; i < $scope.clientProfiles.profiles.length; i++) {
+                var currentProfile = $scope.clientProfiles.profiles[i];
+                if (currentProfile.name === clientProfile.name) {
+                    $scope.clientProfiles.profiles.splice(i, 1);
+                    break;
+                }
             }
-        }
 
-        ClientPoliciesProfiles.update({
-            realm: realm.realm,
-        }, $scope.clientProfiles,  function () {
-            $route.reload();
-            Notifications.success("The client profile was deleted.");
-        }, function(errorResponse) {
-            Notifications.error('Failed to delete client profile. Check server log for the details');
+            ClientPoliciesProfiles.update({
+                realm: realm.realm,
+            }, $scope.clientProfiles, function () {
+                $route.reload();
+                Notifications.success("The client profile was deleted.");
+            }, function (errorResponse) {
+                $route.reload();
+                var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+                Notifications.error('Failed to delete client profile: ' + errDetails);
+            });
         });
     };
 
@@ -3016,7 +3020,7 @@ module.controller('ClientPoliciesProfilesJsonCtrl', function($scope, realm, clie
             $route.reload();
             Notifications.success("The client profiles configuration was updated.");
         }, function(errorResponse) {
-            var errDetails = (!errorResponse.data || !errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
             Notifications.error("Failed to update client profiles: " + errDetails);
             console.log("Error response when updating client profiles JSON: Status: " + errorResponse.status +
                     ", statusText: " + errorResponse.statusText + ", data: " + JSON.stringify(errorResponse.data));
@@ -3070,20 +3074,27 @@ module.controller('ClientPoliciesProfilesEditCtrl', function($scope, realm, clie
         }
     }
 
-    $scope.readOnly = !$scope.access.manageRealm || globalProfile;
+    // needs to be a function because when this controller runs, the permissions might not be loaded yet
+    $scope.isReadOnly = function() {
+        return !$scope.access.manageRealm || globalProfile;
+    }
 
     $scope.removeExecutor = function(executorIndex) {
-        console.log("remove executor of index " + executorIndex);
+        Dialog.confirmDelete($scope.editedProfile.executors[executorIndex].executor, 'executor', function() {
+            console.log("remove executor of index " + executorIndex);
 
-        // Delete executor
-        $scope.editedProfile.executors.splice(executorIndex, 1);
+            // Delete executor
+            $scope.editedProfile.executors.splice(executorIndex, 1);
 
-        ClientPoliciesProfiles.update({
-            realm: realm.realm,
-        }, clientProfiles,  function () {
-            Notifications.success("The executor was deleted.");
-        }, function(errorResponse) {
-            Notifications.error('Failed to delete executor. Check server log for the details');
+            ClientPoliciesProfiles.update({
+                realm: realm.realm,
+            }, clientProfiles, function () {
+                Notifications.success("The executor was deleted.");
+            }, function (errorResponse) {
+                $route.reload();
+                var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+                Notifications.error('Failed to delete executor: ' + errDetails);
+            });
         });
     }
 
@@ -3108,10 +3119,11 @@ module.controller('ClientPoliciesProfilesEditCtrl', function($scope, realm, clie
                 $location.url('/realms/' + realm.realm + '/client-policies/profiles');
             }
         }, function(errorResponse) {
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
             if ($scope.createNew) {
-                Notifications.error('Failed to create client profile. Check server log for the details');
+                Notifications.error('Failed to create client profile: ' + errDetails);
             } else {
-                Notifications.error('Failed to update client profile. Check server log for the details');
+                Notifications.error('Failed to update client profile: ' + errDetails);
             }
         });
 
@@ -3145,16 +3157,19 @@ module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, rea
     }
 
     var globalProfile = false;
-    var editedProfile = getProfileByName(clientProfiles.profiles);
-    if (!editedProfile) {
-        editedProfile = getProfileByName(clientProfiles.globalProfiles);
+    $scope.editedProfile = getProfileByName(clientProfiles.profiles);
+    if (!$scope.editedProfile) {
+        $scope.editedProfile = getProfileByName(clientProfiles.globalProfiles);
         globalProfile = true;
     }
-    if (editedProfile == null) {
+    if ($scope.editedProfile == null) {
         throw 'Client profile of specified name not found';
     }
 
-    $scope.readOnly = !$scope.access.manageRealm || globalProfile;
+    // needs to be a function because when this controller runs, the permissions might not be loaded yet
+    $scope.isReadOnly = function() {
+        return !$scope.access.manageRealm || globalProfile;
+    }
 
     $scope.executorTypes = serverInfo.componentTypes['org.keycloak.services.clientpolicy.executor.ClientPolicyExecutorProvider'];
 
@@ -3189,7 +3204,7 @@ module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, rea
             }
         }, true);
     } else {
-        var exec = getExecutorByIndex(editedProfile, updatedExecutorIndex);
+        var exec = getExecutorByIndex($scope.editedProfile, updatedExecutorIndex);
         if (exec) {
             $scope.executor = {
                 config: exec.configuration
@@ -3239,8 +3254,8 @@ module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, rea
         console.log("save: " + $scope.executorType.id);
 
         var executorName = $scope.executorType.id;
-        if (!editedProfile.executors) {
-            editedProfile.executors = [];
+        if (!$scope.editedProfile.executors) {
+            $scope.editedProfile.executors = [];
         }
 
         ComponentUtils.removeLastEmptyValue($scope.executor.config);
@@ -3250,9 +3265,9 @@ module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, rea
                 executor: $scope.executorType.id,
                 configuration: $scope.executor.config
             };
-            editedProfile.executors.push(selectedExecutor);
+            $scope.editedProfile.executors.push(selectedExecutor);
         } else {
-            var currentExecutor = getExecutorByIndex(editedProfile, updatedExecutorIndex);
+            var currentExecutor = getExecutorByIndex($scope.editedProfile, updatedExecutorIndex);
             if (currentExecutor) {
                 currentExecutor.configuration = $scope.executor.config;
             }
@@ -3266,13 +3281,20 @@ module.controller('ClientPoliciesProfilesEditExecutorCtrl', function($scope, rea
             } else {
                 Notifications.success("Executor updated successfully");
             }
-            $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + editedProfile.name);
+            $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + $scope.editedProfile.name);
+        }, function(errorResponse) {
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+            if ($scope.createNew) {
+                Notifications.error('Failed to create executor: ' + errDetails);
+            } else {
+                Notifications.error('Failed to update executor: ' + errDetails);
+            }
         });
 
     };
 
     $scope.cancel = function() {
-        $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + editedProfile.name);
+        $location.url('/realms/' + realm.realm + '/client-policies/profiles-update/' + $scope.editedProfile.name);
     };
 
 });
@@ -3283,23 +3305,27 @@ module.controller('ClientPoliciesListCtrl', function($scope, realm, clientPolici
     $scope.clientPolicies = clientPolicies;
 
     $scope.removeClientPolicy = function(clientPolicy) {
-        console.log("Deleting client policy from the JSON: " + clientPolicy.name);
+        Dialog.confirmDelete(clientPolicy.name, 'client policy', function() {
+            console.log("Deleting client policy from the JSON: " + clientPolicy.name);
 
-        for (var i=0 ; i < $scope.clientPolicies.policies.length ; i++) {
-            var currentPolicy = $scope.clientPolicies.policies[i];
-            if (currentPolicy.name === clientPolicy.name) {
-                $scope.clientPolicies.policies.splice(i, 1);
-                break;
+            for (var i = 0; i < $scope.clientPolicies.policies.length; i++) {
+                var currentPolicy = $scope.clientPolicies.policies[i];
+                if (currentPolicy.name === clientPolicy.name) {
+                    $scope.clientPolicies.policies.splice(i, 1);
+                    break;
+                }
             }
-        }
 
-        ClientPolicies.update({
-            realm: realm.realm,
-        }, $scope.clientPolicies,  function () {
-            $route.reload();
-            Notifications.success("The client policy was deleted.");
-        }, function(errorResponse) {
-            Notifications.error('Failed to delete client policy. Check server log for the details');
+            ClientPolicies.update({
+                realm: realm.realm,
+            }, $scope.clientPolicies, function () {
+                $route.reload();
+                Notifications.success("The client policy was deleted.");
+            }, function (errorResponse) {
+                $route.reload();
+                var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+                Notifications.error('Failed to delete client policy: ' + errDetails);
+            });
         });
     };
 
@@ -3327,7 +3353,7 @@ module.controller('ClientPoliciesJsonCtrl', function($scope, realm, clientPolici
             $route.reload();
             Notifications.success("The client policies configuration was updated.");
         }, function(errorResponse) {
-            var errDetails = (!errorResponse.data || !errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
             Notifications.error("Failed to update client policies: " + errDetails);
             console.log("Error response when updating client policies JSON: Status: " + errorResponse.status +
                     ", statusText: " + errorResponse.statusText + ", data: " + JSON.stringify(errorResponse.data));
@@ -3375,7 +3401,10 @@ module.controller('ClientPoliciesEditCtrl', function($scope, realm, clientProfil
         }
     }
 
-    $scope.readOnly = !$scope.access.manageRealm;
+    // needs to be a function because when this controller runs, the permissions might not be loaded yet
+    $scope.isReadOnly = function() {
+        return !$scope.access.manageRealm;
+    }
 
     $scope.availableProfiles = [];
     var allClientProfiles = clientProfiles.profiles;
@@ -3390,17 +3419,21 @@ module.controller('ClientPoliciesEditCtrl', function($scope, realm, clientProfil
     }
 
     $scope.removeCondition = function(conditionIndex) {
-        console.log("remove condition of index " + conditionIndex);
+        Dialog.confirmDelete($scope.editedPolicy.conditions[conditionIndex].condition, 'condition', function() {
+            console.log("remove condition of index " + conditionIndex);
 
-        // Delete condition
-        $scope.editedPolicy.conditions.splice(conditionIndex, 1);
+            // Delete condition
+            $scope.editedPolicy.conditions.splice(conditionIndex, 1);
 
-        ClientPolicies.update({
-            realm: realm.realm,
-        }, $scope.clientPolicies,  function () {
-            Notifications.success("The condition was deleted.");
-        }, function(errorResponse) {
-            Notifications.error('Failed to delete condition. Check server log for the details');
+            ClientPolicies.update({
+                realm: realm.realm,
+            }, $scope.clientPolicies, function () {
+                Notifications.success("The condition was deleted.");
+            }, function (errorResponse) {
+                $route.reload();
+                var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+                Notifications.error('Failed to delete condition: ' + errDetails);
+            });
         });
     }
 
@@ -3425,10 +3458,11 @@ module.controller('ClientPoliciesEditCtrl', function($scope, realm, clientProfil
                 $location.url('/realms/' + realm.realm + '/client-policies/policies');
             }
         }, function(errorResponse) {
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
             if ($scope.createNew) {
-                Notifications.error('Failed to create client policy. Check server log for the details');
+                Notifications.error('Failed to create client policy: ' + errDetails);
             } else {
-                Notifications.error('Failed to update client policy. Check server log for the details');
+                Notifications.error('Failed to update client policy: ' + errDetails);
             }
         });
 
@@ -3453,7 +3487,9 @@ module.controller('ClientPoliciesEditCtrl', function($scope, realm, clientProfil
         }, $scope.clientPolicies,  function () {
             Notifications.success(notificationsMessage);
         }, function(errorResponse) {
-            Notifications.error('Failed to update profiles of the policy. Check server log for the details');
+            $route.reload();
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+            Notifications.error('Failed to update profiles of the policy: ' + errDetails);
         });
     }
 
@@ -3480,19 +3516,22 @@ module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, ser
     }
     $scope.realm = realm;
 
-    var editedPolicy = null;
+    $scope.editedPolicy = null;
     for (var i=0 ; i < clientPolicies.policies.length ; i++) {
         var currentPolicy = clientPolicies.policies[i];
         if (targetPolicyName === currentPolicy.name) {
-            editedPolicy = currentPolicy;
+            $scope.editedPolicy = currentPolicy;
             break;
         }
     }
-    if (editedPolicy == null) {
+    if ($scope.editedPolicy == null) {
         throw 'Client policy of specified name not found';
     }
 
-    $scope.readOnly = !$scope.access.manageRealm;
+    // needs to be a function because when this controller runs, the permissions might not be loaded yet
+    $scope.isReadOnly = function() {
+        return !$scope.access.manageRealm;
+    }
 
     $scope.conditionTypes = serverInfo.componentTypes['org.keycloak.services.clientpolicy.condition.ClientPolicyConditionProvider'];
 
@@ -3527,7 +3566,7 @@ module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, ser
             }
         }, true);
     } else {
-        var cond = getConditionByIndex(editedPolicy, updatedConditionIndex);
+        var cond = getConditionByIndex($scope.editedPolicy, updatedConditionIndex);
         if (cond) {
             $scope.condition = {
                 config: cond.configuration
@@ -3578,8 +3617,8 @@ module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, ser
         console.log("save: " + $scope.conditionType.id);
 
         var conditionName = $scope.conditionType.id;
-        if (!editedPolicy.conditions) {
-            editedPolicy.conditions = [];
+        if (!$scope.editedPolicy.conditions) {
+            $scope.editedPolicy.conditions = [];
         }
 
         ComponentUtils.removeLastEmptyValue($scope.condition.config);
@@ -3590,9 +3629,9 @@ module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, ser
                 condition: $scope.conditionType.id,
                 configuration: $scope.condition.config
             };
-            editedPolicy.conditions.push(selectedCondition);
+            $scope.editedPolicy.conditions.push(selectedCondition);
         } else {
-            var currentCondition = getConditionByIndex(editedPolicy, updatedConditionIndex);
+            var currentCondition = getConditionByIndex($scope.editedPolicy, updatedConditionIndex);
             if (currentCondition) {
                 currentCondition.configuration = $scope.condition.config;
             }
@@ -3606,13 +3645,20 @@ module.controller('ClientPoliciesEditConditionCtrl', function($scope, realm, ser
             } else {
                 Notifications.success("Condition updated successfully");
             }
-            $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + editedPolicy.name);
+            $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + $scope.editedPolicy.name);
+        }, function(errorResponse) {
+            var errDetails = (!errorResponse.data.errorMessage) ? "unknown error, please see the server log" : errorResponse.data.errorMessage
+            if ($scope.createNew) {
+                Notifications.error('Failed to create condition: ' + errDetails);
+            } else {
+                Notifications.error('Failed to update condition: ' + errDetails);
+            }
         });
 
     };
 
     $scope.cancel = function() {
-        $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + editedPolicy.name);
+        $location.url('/realms/' + realm.realm + '/client-policies/policies-update/' + $scope.editedPolicy.name);
     };
 
 });
