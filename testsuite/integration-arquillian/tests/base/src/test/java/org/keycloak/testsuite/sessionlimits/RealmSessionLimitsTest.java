@@ -16,14 +16,11 @@
  */
 package org.keycloak.testsuite.sessionlimits;
 
-import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.graphene.page.Page;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordFormFactory;
 import org.keycloak.authentication.authenticators.sessionlimits.RealmSessionLimitsAuthenticatorFactory;
 import org.keycloak.models.AuthenticationExecutionModel;
@@ -32,10 +29,8 @@ import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
-import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.pages.LoginPage;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
 
@@ -47,58 +42,38 @@ import java.util.Map;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.forms.AbstractFlowTest;
 
-public class RealmSessionLimitsTest extends AbstractTestRealmKeycloakTest {
-
-    @Deployment
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(UserResource.class)
-                .addPackages(true, "org.keycloak.testsuite");
-    }
+@AuthServerContainerExclude(AuthServerContainerExclude.AuthServer.REMOTE)
+public class RealmSessionLimitsTest extends AbstractFlowTest {
 
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
         UserRepresentation user = UserBuilder.create()
                 .id("login-test")
                 .username("login-test")
-                .email("login@test.com")
+                .email("login1@test.com")
                 .enabled(true)
                 .password("password")
                 .build();
+
         RealmBuilder.edit(testRealm)
                 .user(user);
     }
 
     @Before
     public void setupFlows() {
-
+        // Do this just once per class
+        if (testContext.isInitialized()) {
+            return;
+        }
         testingClient.server().run(session -> {
             RealmModel realm = session.realms().getRealmByName("test");
-
-            if (realm.getBrowserFlow().getAlias().equals("parent-flow")) {
-                return;
-            }
-            // Parent flow
-            AuthenticationFlowModel browser = new AuthenticationFlowModel();
-            browser.setAlias("parent-flow");
-            browser.setDescription("browser based authentication");
-            browser.setProviderId("basic-flow");
-            browser.setTopLevel(true);
-            browser.setBuiltIn(true);
-            browser = realm.addAuthenticationFlow(browser);
-            realm.setBrowserFlow(browser);
-
-            //  username password
-            AuthenticationExecutionModel execution = new AuthenticationExecutionModel();
-            execution.setParentFlow(browser.getId());
-            execution.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
-            execution.setAuthenticator(UsernamePasswordFormFactory.PROVIDER_ID);
-            execution.setPriority(20);
-            execution.setAuthenticatorFlow(false);
-            realm.addAuthenticatorExecution(execution);
+            AuthenticationFlowModel browser = realm.getBrowserFlow();
 
             // session limits authenticator
-            execution = new AuthenticationExecutionModel();
+            AuthenticationExecutionModel execution = new AuthenticationExecutionModel();
             execution.setParentFlow(browser.getId());
             execution.setRequirement(AuthenticationExecutionModel.Requirement.ALTERNATIVE);
             execution.setAuthenticator(RealmSessionLimitsAuthenticatorFactory.PROVIDER_ID);
@@ -111,27 +86,36 @@ public class RealmSessionLimitsTest extends AbstractTestRealmKeycloakTest {
             sessionAuthenticatorConfig.put(RealmSessionLimitsAuthenticatorFactory.REALM_LIMIT, "1");
             configModel.setConfig(sessionAuthenticatorConfig);
             configModel.setAlias("realm-session-limits");
+            configModel.setId("session-limits");
+
             configModel = realm.addAuthenticatorConfig(configModel);
             execution.setAuthenticatorConfig(configModel.getId());
             realm.addAuthenticatorExecution(execution);
         });
+        testContext.setInitialized(true);
     }
 
     @Rule
     public AssertEvents events = new AssertEvents(this);
 
+//    @Override
+//    public void deleteCookies() {
+//        System.out.println("org.keycloak.testsuite.sessionlimits.RealmSessionLimitsTest.deleteCookies() DONT");
+//    }
     @Page
     protected LoginPage loginPage;
 
     @Test
-    public void testSessionCreationAllowed() {
+    public void testSessionCreationAllowed() throws InterruptedException {
         String loginFormUrl = oauth.getLoginFormUrl();
         driver.navigate().to(loginFormUrl);
         loginPage.assertCurrent();
+        loginPage.login("login-test", "password");
+        Thread.sleep(100000);
     }
 
     @Test
-    public void testSessionCountExceededAndNewSessionDenied() {
+    public void testSessionCountExceededAndNewSessionDenied() throws InterruptedException {
         // Perform a successful login, so the session count will be 1.
         // Any subsequent request for the login page should be denied.
         loginPage.open();
