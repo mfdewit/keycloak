@@ -18,7 +18,7 @@ public class UserSessionLimitsAuthenticatorFactory implements AuthenticatorFacto
     public static final String DENY_NEW_SESSION = "Deny new session";
     public static final String TERMINATE_OLDEST_SESSION = "Terminate oldest session";
     public static final String USER_SESSION_LIMITS = "user-session-limits";
-
+    public static final String ERROR_MESSAGE = "errorMessage";
 
     private static AuthenticationExecutionModel.Requirement[] REQUIREMENT_CHOICES = {
             AuthenticationExecutionModel.Requirement.REQUIRED,
@@ -73,8 +73,13 @@ public class UserSessionLimitsAuthenticatorFactory implements AuthenticatorFacto
         behaviourProperty.setType(ProviderConfigProperty.LIST_TYPE);
         behaviourProperty.setDefaultValue(DENY_NEW_SESSION);
         behaviourProperty.setOptions(Arrays.asList(DENY_NEW_SESSION, TERMINATE_OLDEST_SESSION));
+        
+        ProviderConfigProperty customErrorMessage = new ProviderConfigProperty();
+        customErrorMessage.setName(ERROR_MESSAGE);
+        customErrorMessage.setLabel("Optional custom error message");
+        customErrorMessage.setType(ProviderConfigProperty.STRING_TYPE);
 
-        return Arrays.asList(userRealmLimit, userClientLimit, behaviourProperty);
+        return Arrays.asList(userRealmLimit, userClientLimit, behaviourProperty, customErrorMessage);
     }
 
     @Override

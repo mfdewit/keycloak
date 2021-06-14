@@ -17,6 +17,8 @@ public class RealmSessionLimitsAuthenticatorFactory implements AuthenticatorFact
     public static final String BEHAVIOR = "behavior";
     public static final String DENY_NEW_SESSION = "Deny new session";
     public static final String LOG_ONLY = "Do nothing, just log";
+    public static final String ERROR_MESSAGE = "errorMessage";
+    public static final String USER_SESSION_LIMITS = "user-session-limits";
 
     private static AuthenticationExecutionModel.Requirement[] REQUIREMENT_CHOICES = {
             AuthenticationExecutionModel.Requirement.ALTERNATIVE,
@@ -67,7 +69,12 @@ public class RealmSessionLimitsAuthenticatorFactory implements AuthenticatorFact
         behaviourProperty.setDefaultValue(LOG_ONLY);
         behaviourProperty.setOptions(Arrays.asList(DENY_NEW_SESSION, LOG_ONLY));
 
-        return Arrays.asList(realmSessionCountLimit, behaviourProperty);
+        ProviderConfigProperty customErrorMessage = new ProviderConfigProperty();
+        customErrorMessage.setName(ERROR_MESSAGE);
+        customErrorMessage.setLabel("Optional custom error message");
+        customErrorMessage.setType(ProviderConfigProperty.STRING_TYPE);
+
+        return Arrays.asList(realmSessionCountLimit, behaviourProperty, customErrorMessage);
     }
 
     @Override

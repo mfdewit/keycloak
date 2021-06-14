@@ -16,13 +16,10 @@
  */
 package org.keycloak.testsuite.sessionlimits;
 
-import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.graphene.page.Page;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordFormFactory;
 import org.keycloak.authentication.authenticators.sessionlimits.UserSessionLimitsAuthenticatorFactory;
 import org.keycloak.models.AuthenticationExecutionModel;
@@ -34,44 +31,40 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.pages.LoginPage;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
 
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.Assert;
+import org.keycloak.testsuite.pages.AppPage;
+import org.keycloak.testsuite.pages.ErrorPage;
 
 public class UserSessionLimitsTest extends AbstractTestRealmKeycloakTest {
 
-    @Deployment
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(UserResource.class)
-                .addPackages(true, "org.keycloak.testsuite");
-    }
+    private static final String LOGINTEST1 = "login-test-1";
+    private static final String PASSWORD1 = "password1";
+
+    private static final String ERROR_TO_DISPLAY = "This account has too many sessions";
 
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
         UserRepresentation user1 = UserBuilder.create()
-                .id("login-test-1")
-                .username("login-test-1")
+                .id(LOGINTEST1)
+                .username(LOGINTEST1)
                 .email("login1@test.com")
                 .enabled(true)
-                .password("password1")
+                .password(PASSWORD1)
                 .build();
-        UserRepresentation user2 = UserBuilder.create()
-                .id("login-test-2")
-                .username("login-test-2")
-                .email("login2@test.com")
-                .enabled(true)
-                .password("password2")
-                .build();
-        RealmBuilder.edit(testRealm)
-                .user(user1).user(user2);
+        RealmBuilder.edit(testRealm).user(user1);
     }
 
     @Before
     public void setupFlows() {
-
+        // Do this just once per class
+        if (testContext.isInitialized()) {
+            return;
+        }
         testingClient.server().run(session -> {
             RealmModel realm = session.realms().getRealmByName("test");
 
@@ -110,30 +103,43 @@ public class UserSessionLimitsTest extends AbstractTestRealmKeycloakTest {
             sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.BEHAVIOR, UserSessionLimitsAuthenticatorFactory.DENY_NEW_SESSION);
             sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.USER_REALM_LIMIT, "1");
             sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.USER_CLIENT_LIMIT, "1");
+            sessionAuthenticatorConfig.put(UserSessionLimitsAuthenticatorFactory.ERROR_MESSAGE, ERROR_TO_DISPLAY);
             configModel.setConfig(sessionAuthenticatorConfig);
             configModel.setAlias("user-session-limits");
             configModel = realm.addAuthenticatorConfig(configModel);
             execution.setAuthenticatorConfig(configModel.getId());
             realm.addAuthenticatorExecution(execution);
         });
+        testContext.setInitialized(true);
     }
 
     @Rule
     public AssertEvents events = new AssertEvents(this);
 
     @Page
-    protected LoginPage loginPage, loginPage2;
-
-    @Test
-    public void testSessionCreationAllowed() {
-        loginPage.open();
-        loginPage.login("login-test-1", "password1");
-        // Now login here with user2
-    }
+    protected LoginPage loginPage;
+    @Page
+    protected AppPage appPage;
+    @Page
+    protected ErrorPage errorPage;
 
     @Test
     public void testSessionCountExceededAndNewSessionDenied() {
-        // Login twice with user-1 and expect the session to be denied
+        // Login and verify login was succesfull
+        loginPage.open();
+        loginPage.login(LOGINTEST1, PASSWORD1);
+        appPage.assertCurrent();
+        appPage.openAccount();
+        
+        // Delete the cookies, while maintaining the server side session active
+        super.deleteCookies();
+        
+        // Login the same user again and verify the configured error message is shown
+        loginPage.open();
+        loginPage.login(LOGINTEST1, PASSWORD1);
+        errorPage.assertCurrent();
+
+        Assert.assertEquals(ERROR_TO_DISPLAY, errorPage.getError());
     }
 
 }

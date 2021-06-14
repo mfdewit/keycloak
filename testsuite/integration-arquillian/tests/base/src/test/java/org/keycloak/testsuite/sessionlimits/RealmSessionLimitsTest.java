@@ -21,7 +21,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.keycloak.authentication.authenticators.browser.UsernamePasswordFormFactory;
 import org.keycloak.authentication.authenticators.sessionlimits.RealmSessionLimitsAuthenticatorFactory;
 import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.AuthenticationFlowModel;
@@ -44,6 +43,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
 import org.keycloak.testsuite.forms.AbstractFlowTest;
+import org.keycloak.testsuite.pages.AppPage;
 
 @AuthServerContainerExclude(AuthServerContainerExclude.AuthServer.REMOTE)
 public class RealmSessionLimitsTest extends AbstractFlowTest {
@@ -98,28 +98,19 @@ public class RealmSessionLimitsTest extends AbstractFlowTest {
     @Rule
     public AssertEvents events = new AssertEvents(this);
 
-//    @Override
-//    public void deleteCookies() {
-//        System.out.println("org.keycloak.testsuite.sessionlimits.RealmSessionLimitsTest.deleteCookies() DONT");
-//    }
     @Page
     protected LoginPage loginPage;
+    @Page
+    protected AppPage appPage;
 
     @Test
-    public void testSessionCreationAllowed() throws InterruptedException {
-        String loginFormUrl = oauth.getLoginFormUrl();
-        driver.navigate().to(loginFormUrl);
-        loginPage.assertCurrent();
-        loginPage.login("login-test", "password");
-        Thread.sleep(100000);
-    }
-
-    @Test
-    public void testSessionCountExceededAndNewSessionDenied() throws InterruptedException {
+    public void testSessionCountExceededAndNewSessionDenied() {
         // Perform a successful login, so the session count will be 1.
         // Any subsequent request for the login page should be denied.
         loginPage.open();
         loginPage.login("login-test", "password");
+        appPage.assertCurrent();
+        appPage.openAccount();
 
         // Now request the login page and expect a 403.
         Client clientThatShouldBeDenied = ClientBuilder.newClient();
