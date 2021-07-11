@@ -31,11 +31,11 @@ public class RealmSessionLimitsAuthenticator extends AbstractSessionLimitsAuthen
         Map<String, Long> activeClientSessionStats = session.sessions().getActiveClientSessionStats(context.getRealm(), false);
         long realmSessionCount = activeClientSessionStats.values().stream().reduce(0L, Long::sum);
 
-        logger.infof("realm limit: %s", realmLimit);
-        logger.infof("current session count within realm: %s", realmSessionCount);
+        logger.debugf("realm limit: %s", realmLimit);
+        logger.debugf("current session count within realm: %s", realmSessionCount);
         final boolean exceedsLimit = exceedsLimit(realmSessionCount, realmLimit);
         if (exceedsLimit) {
-            logger.infof("Session count exceeded configured limit for realm. Count: %s, Limit: %s, Realm: %s", realmSessionCount, realmLimit, context.getRealm().getDisplayName());
+            logger.infof("Session count exceeded configured limit for realm. Count: %s, Limit: %s, Realm: %s", realmSessionCount, realmLimit, context.getRealm().getName());
             if (RealmSessionLimitsAuthenticatorFactory.DENY_NEW_SESSION.equals(behavior)) {
                 String errorMessage = Optional.ofNullable(customErrorMessage).orElse(Messages.SESSION_LIMIT_EXCEEDED);
                 context.getEvent().error(Errors.SESSION_LIMIT_EXCEEDED);
