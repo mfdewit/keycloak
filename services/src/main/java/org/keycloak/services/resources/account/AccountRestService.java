@@ -37,6 +37,7 @@ import org.keycloak.representations.account.ClientRepresentation;
 import org.keycloak.representations.account.ConsentRepresentation;
 import org.keycloak.representations.account.ConsentScopeRepresentation;
 import org.keycloak.representations.account.UserRepresentation;
+import org.keycloak.representations.idm.ErrorRepresentation;
 import org.keycloak.services.ErrorResponse;
 import org.keycloak.services.managers.Auth;
 import org.keycloak.services.managers.UserConsentManager;
@@ -45,10 +46,13 @@ import org.keycloak.services.resources.account.resources.ResourcesService;
 import org.keycloak.services.util.ResolveRelative;
 import org.keycloak.storage.ReadOnlyException;
 import org.keycloak.theme.Theme;
-import org.keycloak.userprofile.UserProfileContext;
-import org.keycloak.userprofile.ValidationException;
+import org.keycloak.userprofile.AttributeMetadata;
+import org.keycloak.userprofile.Attributes;
 import org.keycloak.userprofile.UserProfile;
+import org.keycloak.userprofile.UserProfileContext;
 import org.keycloak.userprofile.UserProfileProvider;
+import org.keycloak.userprofile.ValidationException;
+import org.keycloak.userprofile.ValidationException.Error;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
@@ -65,6 +69,7 @@ import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -135,14 +140,11 @@ public class AccountRestService {
         rep.setLastName(user.getLastName());
         rep.setEmail(user.getEmail());
         rep.setEmailVerified(user.isEmailVerified());
-        rep.setEmailVerified(user.isEmailVerified());
-        Map<String, List<String>> attributes = user.getAttributes();
-        Map<String, List<String>> copiedAttributes = new HashMap<>(attributes);
-        copiedAttributes.remove(UserModel.FIRST_NAME);
-        copiedAttributes.remove(UserModel.LAST_NAME);
-        copiedAttributes.remove(UserModel.EMAIL);
-        copiedAttributes.remove(UserModel.USERNAME);
-        rep.setAttributes(copiedAttributes);
+
+        UserProfileProvider provider = session.getProvider(UserProfileProvider.class);
+        UserProfile profile = provider.create(UserProfileContext.ACCOUNT, user);
+
+        rep.setAttributes(profile.getAttributes().getReadable(false));
 
         return rep;
     }
@@ -157,9 +159,10 @@ public class AccountRestService {
 
         event.event(EventType.UPDATE_PROFILE).client(auth.getClient()).user(auth.getUser());
 
+        UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
+        UserProfile profile = profileProvider.create(UserProfileContext.ACCOUNT, rep.toAttributes(), auth.getUser());
+
         try {
-            UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
-            UserProfile profile = profileProvider.create(UserProfileContext.ACCOUNT, rep.toAttributes(), auth.getUser());
 
             profile.update();
 
@@ -167,19 +170,38 @@ public class AccountRestService {
 
             return Response.noContent().build();
         } catch (ValidationException pve) {
-            if (pve.hasError(Messages.READ_ONLY_USERNAME))
-                return ErrorResponse.error(Messages.READ_ONLY_USERNAME, Response.Status.BAD_REQUEST);
-            if (pve.hasError(Messages.USERNAME_EXISTS))
-                return ErrorResponse.exists(Messages.USERNAME_EXISTS);
-            if (pve.hasError(Messages.EMAIL_EXISTS))
-                return ErrorResponse.exists(Messages.EMAIL_EXISTS);
-
-            // Here should be possibility to somehow return all errors?
-            String firstErrorMessage = pve.getErrors().get(0).getMessage();
-            return ErrorResponse.error(firstErrorMessage, Response.Status.BAD_REQUEST);
+            List<ErrorRepresentation> errors = new ArrayList<>();
+            for(Error err: pve.getErrors()) {
+                errors.add(new ErrorRepresentation(err.getAttribute(), err.getMessage(), validationErrorParamsToString(err.getMessageParameters(), profile.getAttributes())));
+            }
+            return ErrorResponse.errors(errors, pve.getStatusCode(), false);
         } catch (ReadOnlyException e) {
             return ErrorResponse.error(Messages.READ_ONLY_USER, Response.Status.BAD_REQUEST);
         }
+    }
+
+    private String[] validationErrorParamsToString(Object[] messageParameters, Attributes userProfileAttributes) {
+        if(messageParameters == null)
+            return null;
+        String[] ret = new String[messageParameters.length];
+        int i = 0;
+        for(Object p: messageParameters) {
+            if(p != null) {
+                //first parameter is user profile attribute name, we have to take Display Name for it
+                if(i==0) {
+                    AttributeMetadata am = userProfileAttributes.getMetadata(p.toString());
+                    if(am != null)
+                        ret[i++] = am.getAttributeDisplayName();
+                    else 
+                        ret[i++] = p.toString();
+                } else {
+                    ret[i++] = p.toString();
+                }
+            } else {
+                i++;
+            }
+        }
+        return ret;
     }
 
     /**
