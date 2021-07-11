@@ -24,6 +24,7 @@ import org.keycloak.authorization.model.Resource;
 import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.policy.provider.PolicyProviderFactory;
+import org.keycloak.common.Profile;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.common.util.Time;
 import org.keycloak.component.ComponentModel;
@@ -315,7 +316,11 @@ public class ModelToRepresentation {
         rep.setQuickLoginCheckMilliSeconds(realm.getQuickLoginCheckMilliSeconds());
         rep.setMaxDeltaTimeSeconds(realm.getMaxDeltaTimeSeconds());
         rep.setFailureFactor(realm.getFailureFactor());
-        rep.setUserManagedAccessAllowed(realm.isUserManagedAccessAllowed());
+        if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION)) {
+            rep.setUserManagedAccessAllowed(realm.isUserManagedAccessAllowed());
+        } else {
+            rep.setUserManagedAccessAllowed(false);
+        }
 
         rep.setEventsEnabled(realm.isEventsEnabled());
         if (realm.getEventsExpiration() != 0) {
@@ -406,6 +411,10 @@ public class ModelToRepresentation {
         attrMap.put(CibaConfig.CIBA_EXPIRES_IN, String.valueOf(cibaPolicy.getExpiresIn()));
         attrMap.put(CibaConfig.CIBA_INTERVAL, String.valueOf(cibaPolicy.getPoolingInterval()));
         attrMap.put(CibaConfig.CIBA_AUTH_REQUESTED_USER_HINT, cibaPolicy.getAuthRequestedUserHint());
+
+        ParConfig parPolicy = realm.getParPolicy();
+        attrMap.put(ParConfig.PAR_REQUEST_URI_LIFESPAN, String.valueOf(parPolicy.getRequestUriLifespan()));
+
         rep.setAttributes(attrMap);
 
         if (realm.getBrowserFlow() != null) rep.setBrowserFlow(realm.getBrowserFlow().getAlias());
@@ -628,11 +637,13 @@ public class ModelToRepresentation {
         if (!mappings.isEmpty())
             rep.setProtocolMappers(mappings);
 
-        AuthorizationProvider authorization = session.getProvider(AuthorizationProvider.class);
-        ResourceServer resourceServer = authorization.getStoreFactory().getResourceServerStore().findById(clientModel.getId());
+        if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION)) {
+            AuthorizationProvider authorization = session.getProvider(AuthorizationProvider.class);
+            ResourceServer resourceServer = authorization.getStoreFactory().getResourceServerStore().findById(clientModel.getId());
 
-        if (resourceServer != null) {
-            rep.setAuthorizationServicesEnabled(true);
+            if (resourceServer != null) {
+                rep.setAuthorizationServicesEnabled(true);
+            }
         }
 
         return rep;

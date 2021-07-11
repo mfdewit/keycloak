@@ -30,7 +30,6 @@ import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.ClientScopeProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
-import org.keycloak.models.ModelException;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.map.storage.MapKeycloakTransaction;
 import org.keycloak.models.map.storage.MapStorage;
@@ -80,7 +79,7 @@ public class MapClientScopeProvider<K> implements ClientScopeProvider {
         ModelCriteriaBuilder<ClientScopeModel> mcb = clientScopeStore.createCriteriaBuilder()
             .compare(SearchableFields.REALM_ID, Operator.EQ, realm.getId());
 
-        return tx.getUpdatedNotRemoved(mcb)
+        return tx.read(mcb)
           .sorted(COMPARE_BY_NAME)
           .map(entityToAdapterFunc(realm));
     }
@@ -105,7 +104,7 @@ public class MapClientScopeProvider<K> implements ClientScopeProvider {
         if (tx.read(entity.getId()) != null) {
             throw new ModelDuplicateException("Client scope exists: " + id);
         }
-        tx.create(entity.getId(), entity);
+        tx.create(entity);
         return entityToAdapterFunc(realm).apply(entity);
     }
 
@@ -114,10 +113,6 @@ public class MapClientScopeProvider<K> implements ClientScopeProvider {
         if (id == null) return false;
         ClientScopeModel clientScope = getClientScopeById(realm, id);
         if (clientScope == null) return false;
-
-        if (KeycloakModelUtils.isClientScopeUsed(realm, clientScope)) {
-            throw new ModelException("Cannot remove client scope, it is currently in use");
-        }
 
         session.users().preRemove(clientScope);
         realm.removeDefaultClientScope(clientScope);

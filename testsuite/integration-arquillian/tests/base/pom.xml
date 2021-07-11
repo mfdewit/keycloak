@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian-tests</artifactId>
-        <version>14.0.0-SNAPSHOT</version>
+        <version>15.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -1188,6 +1188,7 @@
                             <systemPropertyVariables>
                                 <keycloak.profile.feature.map_storage>enabled</keycloak.profile.feature.map_storage>
                                 <keycloak.mapStorage.provider>concurrenthashmap</keycloak.mapStorage.provider>
+                                <keycloak.dblock.provider>none</keycloak.dblock.provider>
                                 <keycloak.realm.provider>map</keycloak.realm.provider>
                                 <keycloak.client.provider>map</keycloak.client.provider>
                                 <keycloak.clientScope.provider>map</keycloak.clientScope.provider>

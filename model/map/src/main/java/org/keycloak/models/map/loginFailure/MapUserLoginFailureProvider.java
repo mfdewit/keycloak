@@ -66,7 +66,7 @@ public class MapUserLoginFailureProvider<K> implements UserLoginFailureProvider 
 
         LOG.tracef("getUserLoginFailure(%s, %s)%s", realm, userId, getShortStackTrace());
 
-        return userLoginFailureTx.getUpdatedNotRemoved(mcb)
+        return userLoginFailureTx.read(mcb)
                 .findFirst()
                 .map(userLoginFailureEntityToAdapterFunc(realm))
                 .orElse(null);
@@ -80,12 +80,12 @@ public class MapUserLoginFailureProvider<K> implements UserLoginFailureProvider 
 
         LOG.tracef("addUserLoginFailure(%s, %s)%s", realm, userId, getShortStackTrace());
 
-        MapUserLoginFailureEntity<K> userLoginFailureEntity = userLoginFailureTx.getUpdatedNotRemoved(mcb).findFirst().orElse(null);
+        MapUserLoginFailureEntity<K> userLoginFailureEntity = userLoginFailureTx.read(mcb).findFirst().orElse(null);
 
         if (userLoginFailureEntity == null) {
             userLoginFailureEntity = new MapUserLoginFailureEntity<>(userLoginFailureStore.getKeyConvertor().yieldNewUniqueKey(), realm.getId(), userId);
 
-            userLoginFailureTx.create(userLoginFailureEntity.getId(), userLoginFailureEntity);
+            userLoginFailureTx.create(userLoginFailureEntity);
         }
 
         return userLoginFailureEntityToAdapterFunc(realm).apply(userLoginFailureEntity);

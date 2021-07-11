@@ -962,6 +962,39 @@ function clientSelectControl($scope, realm, Client) {
     };
 }
 
+function userProfileAttributeSelectControl($scope, realm, UserProfile) {
+    $scope.userProfileAttributesUiSelect = {
+        minimumInputLength: 0,
+        delay: 500,
+        allowClear: true,
+        id: function(e) { return e.name; },
+        query: function (query) {
+            var data = {results: []};
+            UserProfile.get({realm: realm}, function(config) {
+                var attributes = [];
+
+                if ('' == query.term.trim()) {
+                    attributes = config.attributes;
+                } else {
+                    for (var i = 0; i < config.attributes.length; i++) {
+                        if (config.attributes[i].name.indexOf(query.term.trim()) != -1) {
+                            attributes.push(config.attributes[i]);
+                        }
+                    }
+                }
+                query.callback({results: attributes});
+            });
+        },
+        formatResult: function(object, container, query) {
+            object.text = object.name;
+            return object.name;
+        },
+        formatSelection: function(object, container, query) {
+            return object.name;
+        }
+    };
+}
+
 function roleControl($scope, $route, realm, role, roles, Client,
             ClientRole, RoleById, RoleRealmComposites, RoleClientComposites,
             $http, $location, Notifications, Dialog, ComponentUtils) {
@@ -2105,6 +2138,16 @@ module.factory('UserGroupMapping', function($resource) {
         realm : '@realm',
         userId : '@userId',
         groupId : '@groupId'
+    }, {
+        update : {
+            method : 'PUT'
+        }
+    });
+});
+
+module.factory('UserProfile', function($resource) {
+    return $resource(authUrl + '/admin/realms/:realm/users/profile', {
+        realm : '@realm'
     }, {
         update : {
             method : 'PUT'

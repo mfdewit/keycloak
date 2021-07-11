@@ -20,6 +20,7 @@ import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.authorization.admin.AuthorizationService;
+import org.keycloak.common.Profile;
 import org.keycloak.events.Errors;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
@@ -105,17 +106,17 @@ public class ClientsResource {
                                                  @QueryParam("q") String searchQuery,
                                                  @QueryParam("first") Integer firstResult,
                                                  @QueryParam("max") Integer maxResults) {
+        auth.clients().requireList();
+
         boolean canView = auth.clients().canView();
         Stream<ClientModel> clientModels = Stream.empty();
 
         if (searchQuery != null) {
-            auth.clients().requireList();
             Map<String, String> attributes = SearchQueryUtils.getFields(searchQuery);
             clientModels = canView
                     ? realm.searchClientByAttributes(attributes, firstResult, maxResults)
                     : realm.searchClientByAttributes(attributes, -1, -1);
         } else if (clientId == null || clientId.trim().equals("")) {
-            auth.clients().requireList();
             clientModels = canView
                     ? realm.getClientsStream(firstResult, maxResults)
                     : realm.getClientsStream();
@@ -131,6 +132,7 @@ public class ClientsResource {
         }
 
         Stream<ClientRepresentation> s = clientModels
+                .filter(c -> { try { c.getClientId(); return true; } catch (Exception ex) { return false; } } )
                 .map(c -> {
                     ClientRepresentation representation = null;
                     if (canView || auth.clients().canView(c)) {
@@ -186,7 +188,7 @@ public class ClientsResource {
 
             adminEvent.operation(OperationType.CREATE).resourcePath(session.getContext().getUri(), clientModel.getId()).representation(rep).success();
 
-            if (TRUE.equals(rep.getAuthorizationServicesEnabled())) {
+            if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION) && TRUE.equals(rep.getAuthorizationServicesEnabled())) {
                 AuthorizationService authorizationService = getAuthorizationService(clientModel);
 
                 authorizationService.enable(true);

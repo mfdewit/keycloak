@@ -18,10 +18,17 @@
 
 <div class="col-sm-9 col-md-10 col-sm-push-3 col-md-push-2">
 
+    <ol class="breadcrumb">
+        <li><a href="#/realms/{{realm.realm}}/client-policies/policies">{{:: 'client-policies' | translate}}</a></li>
+        <li><a href="#/realms/{{realm.realm}}/client-policies/policies-update/{{editedPolicy.name}}">{{editedPolicy.name}}</a></li>
+        <li data-ng-show="createNew">{{:: 'create-condition' | translate}}</li>
+        <li data-ng-hide="createNew">{{conditionType.id}}</li>
+    </ol>
+
     <h1 data-ng-hide="createNew">{{conditionType.id|capitalize}}</h1>
     <h1 data-ng-show="createNew">{{:: 'create-condition' | translate}}</h1>
 
-    <form class="form-horizontal" name="realmForm" novalidate kc-read-only="readOnly">
+    <form class="form-horizontal" name="realmForm" novalidate kc-read-only="isReadOnly()">
         <fieldset>
             <div class="form-group" data-ng-show="createNew">
                 <label class="col-md-2 control-label" for="conditionTypeCreate">{{:: 'condition-type' | translate}}</label>
@@ -45,7 +52,7 @@
             <kc-provider-config config="condition.config" properties="conditionType.properties" realm="realm"></kc-provider-config>
         </fieldset>
 
-        <div class="form-group" data-ng-hide="readOnly">
+        <div class="form-group" data-ng-hide="isReadOnly()">
             <div class="col-md-10 col-md-offset-2">
                 <button kc-save>{{:: 'save' | translate}}</button>
                 <button kc-cancel data-ng-click="cancel()">{{:: 'cancel' | translate}}</button>

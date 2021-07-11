@@ -214,8 +214,8 @@ module.config([ '$routeProvider', function($routeProvider) {
                 realm : function(RealmLoader) {
                     return RealmLoader();
                 },
-                serverInfo : function(ServerInfo) {
-                    return ServerInfo.delay;
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
                 }
             },
             controller : 'RealmLoginSettingsCtrl'
@@ -259,6 +259,21 @@ module.config([ '$routeProvider', function($routeProvider) {
                 }
             },
             controller : 'RealmTokenDetailCtrl'
+        })
+        .when('/realms/:realm/user-profile', {
+            templateUrl : resourceUrl + '/partials/realm-user-profile.html',
+            resolve : {
+                serverInfo : function(ServerInfoLoader) {
+                    return ServerInfoLoader();
+                },
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                clientScopes : function(ClientScopeListLoader) {
+                    return ClientScopeListLoader();
+                },
+            },
+            controller : 'RealmUserProfileCtrl'
         })
         .when('/realms/:realm/client-registration/client-initial-access', {
             templateUrl : resourceUrl + '/partials/client-initial-access.html',
@@ -349,7 +364,7 @@ module.config([ '$routeProvider', function($routeProvider) {
                     return RealmLoader();
                 },
                 clientProfiles : function(ClientPoliciesProfilesLoader) {
-                    return ClientPoliciesProfilesLoader.loadClientProfiles('false');
+                    return ClientPoliciesProfilesLoader.loadClientProfiles('true');
                 }
             },
             controller : 'ClientPoliciesProfilesJsonCtrl'
@@ -1442,8 +1457,8 @@ module.config([ '$routeProvider', function($routeProvider) {
             },
             controller : 'ClientCredentialsCtrl'
         })
-        .when('/realms/:realm/clients/:client/credentials/client-jwt/:keyType/import/:attribute', {
-            templateUrl : resourceUrl + '/partials/client-credentials-jwt-key-import.html',
+        .when('/realms/:realm/clients/:client/oidc/:keyType/import/:attribute', {
+            templateUrl : resourceUrl + '/partials/client-oidc-key-import.html',
             resolve : {
                 realm : function(RealmLoader) {
                     return RealmLoader();
@@ -1452,13 +1467,13 @@ module.config([ '$routeProvider', function($routeProvider) {
                     return ClientLoader();
                 },
                 callingContext : function() {
-                    return "jwt-credentials";
+                    return "oidc";
                 }
             },
             controller : 'ClientCertificateImportCtrl'
         })
-        .when('/realms/:realm/clients/:client/credentials/client-jwt/:keyType/export/:attribute', {
-            templateUrl : resourceUrl + '/partials/client-credentials-jwt-key-export.html',
+        .when('/realms/:realm/clients/:client/oidc/:keyType/export/:attribute', {
+            templateUrl : resourceUrl + '/partials/client-oidc-key-export.html',
             resolve : {
                 realm : function(RealmLoader) {
                     return RealmLoader();
@@ -1467,7 +1482,7 @@ module.config([ '$routeProvider', function($routeProvider) {
                     return ClientLoader();
                 },
                 callingContext : function() {
-                    return "jwt-credentials";
+                    return "oidc";
                 }
             },
             controller : 'ClientCertificateExportCtrl'
@@ -1561,6 +1576,18 @@ module.config([ '$routeProvider', function($routeProvider) {
                 }
             },
             controller : 'ClientCertificateExportCtrl'
+        })
+        .when('/realms/:realm/clients/:client/oidc/keys', {
+            templateUrl : resourceUrl + '/partials/client-oidc-keys.html',
+            resolve : {
+                realm : function(RealmLoader) {
+                    return RealmLoader();
+                },
+                client : function(ClientLoader) {
+                    return ClientLoader();
+                }
+            },
+            controller : 'ClientOidcKeyCtrl'
         })
         .when('/realms/:realm/clients/:client/roles', {
             templateUrl : resourceUrl + '/partials/client-role-list.html',
@@ -2421,6 +2448,14 @@ module.factory('errorInterceptor', function($q, $window, $rootScope, $location, 
             } else if (response.status) {
                 if (response.data && response.data.errorMessage) {
                     Notifications.error(response.data.errorMessage);
+                } else if (response.data && response.data.errors) {
+                    var messages = "Multiple errors found: ";
+
+                    for (var i = 0; i < response.data.errors.length; i++) {
+                        messages+=response.data.errors[i].errorMessage + " ";
+                    }
+
+                    Notifications.error(messages);
                 } else if (response.data && response.data.error_description) {
                     Notifications.error(response.data.error_description);
                 } else {
@@ -3013,8 +3048,9 @@ module.controller('RoleSelectorModalCtrl', function($scope, realm, config, confi
     })
 });
 
-module.controller('ProviderConfigCtrl', function ($modal, $scope, $route, ComponentUtils, Client) {
+module.controller('ProviderConfigCtrl', function ($modal, $scope, $route, ComponentUtils, Client, UserProfile, Current) {
     clientSelectControl($scope, $route.current.params.realm, Client);
+    userProfileAttributeSelectControl($scope, $route.current.params.realm, UserProfile);
     $scope.fileNames = {};
     $scope.newMapEntries = {};
     var cachedMaps = {};
@@ -3036,6 +3072,38 @@ module.controller('ProviderConfigCtrl', function ($modal, $scope, $route, Compon
                 }
             });
         }   
+    }
+
+    $scope.initSelectedUserProfileAttributes = function(configName, config) {
+        $scope.selectedUserAttribute = {};
+        if(config[configName]) {
+            UserProfile.get({realm: $route.current.params.realm}, function(data) {
+                if (!data.attributes) {
+                    $scope.userProfileDisabled = true;
+                    return;
+                }
+                for (var i = 0; i < data.attributes.length; i++) {
+                    if (data.attributes[i].name == config[configName]) {
+                        $scope.selectedUserAttribute = data.attributes[i];
+                        $scope.selectedUserAttribute.text = data.attributes[i].name;
+                    }
+                }
+            });
+        }
+    }
+
+    $scope.isPropertyDisabled = function(configName) {
+        var userProfileEnabled = Current.realm.attributes['userProfileEnabled'] == 'true';
+
+        if (configName == 'user.profile.attribute' && !userProfileEnabled) {
+            return true;
+        }
+
+        if (configName == 'user.attribute' && userProfileEnabled) {
+            return true;
+        }
+
+        return false;
     }
 
     $scope.openRoleSelector = function (configName, config) {
@@ -3067,6 +3135,18 @@ module.controller('ProviderConfigCtrl', function ($modal, $scope, $route, Compon
             config[configName][0] = client.clientId;
         } else {
             config[configName] = client.clientId;
+        }
+    };
+
+    $scope.changeUserAttribute = function(configName, config, userAttribute, multivalued) {
+        if (!$scope.selectedUserAttribute) {
+            return;
+        }
+        $scope.selectedUserAttribute = userAttribute;
+        if (multivalued) {
+            config[configName][0] = userAttribute.name;
+        } else {
+            config[configName] = userAttribute.name;
         }
     };
 
